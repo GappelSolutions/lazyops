@@ -1,0 +1,20 @@
+default_project = "energyboard"
+
+[[projects]]
+name = "energyboard"
+organization = "https://dev.azure.com/evulution"
+project = "Energyboard"
+team = "Energyboard Team"
+
+[[projects]]
+name = "backoffice"
+organization = "https://dev.azure.com/evulution"
+project = "Backoffice"
+team = "Backoffice Team"
+
+[theme]
+border = "#5c6370"
+border_active = "#61afef"
+selected_bg = "#1e3250"
+text = "#abb2bf"
+text_muted = "#5c6370"
