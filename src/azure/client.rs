@@ -1,6 +1,6 @@
 use crate::azure::types::*;
 use crate::config::ProjectConfig;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use tokio::process::Command;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -52,7 +52,8 @@ impl AzureCli {
             if stderr.contains("not found") || stderr.contains("does not exist") {
                 anyhow::bail!("Project/team not found. Check config.toml settings.");
             }
-            anyhow::bail!("az command failed: {}", stderr.trim());
+            let trimmed = stderr.trim();
+            anyhow::bail!("az command failed: {trimmed}");
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -70,8 +71,7 @@ impl AzureCli {
     /// Get work items for a sprint iteration path
     pub async fn get_sprint_work_items(&self, iteration_path: &str) -> Result<Vec<WorkItem>> {
         let wiql = format!(
-            r#"SELECT [System.Id], [System.Title], [System.State], [System.WorkItemType], [System.AssignedTo], [System.Parent], [System.Description], [System.IterationPath], [System.Tags], [Microsoft.VSTS.Scheduling.RemainingWork], [Microsoft.VSTS.Scheduling.OriginalEstimate], [Microsoft.VSTS.Scheduling.CompletedWork] FROM WorkItems WHERE [System.IterationPath] = '{}' ORDER BY [System.WorkItemType], [System.Title]"#,
-            iteration_path
+            r#"SELECT [System.Id], [System.Title], [System.State], [System.WorkItemType], [System.AssignedTo], [System.Parent], [System.Description], [System.IterationPath], [System.Tags], [Microsoft.VSTS.Scheduling.RemainingWork], [Microsoft.VSTS.Scheduling.OriginalEstimate], [Microsoft.VSTS.Scheduling.CompletedWork] FROM WorkItems WHERE [System.IterationPath] = '{iteration_path}' ORDER BY [System.WorkItemType], [System.Title]"#
         );
 
         let items = self.query_work_items(&wiql).await?;
@@ -98,7 +98,8 @@ impl AzureCli {
             if stderr.contains("login") || stderr.contains("az login") {
                 anyhow::bail!("Azure CLI not authenticated. Run: az login");
             }
-            anyhow::bail!("az command failed: {}", stderr.trim());
+            let trimmed = stderr.trim();
+            anyhow::bail!("az command failed: {trimmed}");
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -132,7 +133,7 @@ impl AzureCli {
             "state" => "--state",
             "title" => "--title",
             "assigned-to" => "--assigned-to",
-            _ => anyhow::bail!("Unknown field: {}", field),
+            _ => anyhow::bail!("Unknown field: {field}"),
         };
 
         // work-item update doesn't accept --project
@@ -216,5 +217,733 @@ impl AzureCli {
         }
 
         root_ids.iter().filter_map(|&id| build_tree(id, &mut by_id, &children_map, 0)).collect()
+    }
+
+    /// List all pipeline definitions
+    #[allow(dead_code)]
+    pub async fn list_pipelines(&self) -> Result<Vec<Pipeline>> {
+        let output = Command::new("az")
+            .args(["pipelines", "list"])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--output", "json"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to list pipelines: {err}");
+        }
+
+        let pipelines: Vec<Pipeline> = serde_json::from_slice(&output.stdout)?;
+        Ok(pipelines)
+    }
+
+    /// List runs for a specific pipeline
+    #[allow(dead_code)]
+    pub async fn list_pipeline_runs(&self, pipeline_id: i32) -> Result<Vec<PipelineRun>> {
+        let output = Command::new("az")
+            .args(["pipelines", "runs", "list"])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--pipeline-ids", &pipeline_id.to_string()])
+            .args(["--output", "json"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to list pipeline runs: {err}");
+        }
+
+        let runs: Vec<PipelineRun> = serde_json::from_slice(&output.stdout)?;
+        Ok(runs)
+    }
+
+    /// Trigger a pipeline run
+    #[allow(dead_code)]
+    pub async fn trigger_pipeline(&self, pipeline_id: i32, branch: &str) -> Result<PipelineRun> {
+        let output = Command::new("az")
+            .args(["pipelines", "run"])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--id", &pipeline_id.to_string()])
+            .args(["--branch", branch])
+            .args(["--output", "json"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to trigger pipeline: {err}");
+        }
+
+        let run: PipelineRun = serde_json::from_slice(&output.stdout)?;
+        Ok(run)
+    }
+
+    /// List all release definitions
+    #[allow(dead_code)]
+    pub async fn list_release_definitions(&self) -> Result<Vec<ReleaseDefinition>> {
+        let output = Command::new("az")
+            .args(["pipelines", "release", "definition", "list"])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--output", "json"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to list release definitions: {err}");
+        }
+
+        let definitions: Vec<ReleaseDefinition> = serde_json::from_slice(&output.stdout)?;
+        // Filter out deleted/disabled
+        Ok(definitions.into_iter().filter(|d| !d.is_deleted && !d.is_disabled).collect())
+    }
+
+    /// List releases (optionally filtered by definition)
+    #[allow(dead_code)]
+    pub async fn list_releases(&self, definition_id: Option<i32>) -> Result<Vec<Release>> {
+        let mut cmd = Command::new("az");
+        cmd.args(["pipelines", "release", "list"])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--output", "json"]);
+
+        if let Some(def_id) = definition_id {
+            cmd.args(["--definition-id", &def_id.to_string()]);
+        }
+
+        let output = cmd.output().await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to list releases: {err}");
+        }
+
+        let releases: Vec<Release> = serde_json::from_slice(&output.stdout)?;
+        Ok(releases)
+    }
+
+    /// Get release details (includes environments)
+    #[allow(dead_code)]
+    pub async fn get_release(&self, release_id: i32) -> Result<Release> {
+        let output = Command::new("az")
+            .args(["pipelines", "release", "show"])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--id", &release_id.to_string()])
+            .args(["--output", "json"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to get release: {err}");
+        }
+
+        let release: Release = serde_json::from_slice(&output.stdout)?;
+        Ok(release)
+    }
+
+    /// Get build timeline (jobs, tasks, stages)
+    #[allow(dead_code)]
+    pub async fn get_build_timeline(&self, build_id: i32) -> Result<Vec<TimelineRecord>> {
+        let output = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "build"])
+            .args(["--resource", "timeline"])
+            .args(["--route-parameters", &format!("project={}", self.project), &format!("buildId={build_id}")])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to get timeline: {err}");
+        }
+
+        let response: TimelineResponse = serde_json::from_slice(&output.stdout)?;
+        Ok(response.records)
+    }
+
+    /// Get build timeline with optional changeId for efficient delta updates
+    /// Returns None if no changes since last changeId (very lightweight call)
+    pub async fn get_build_timeline_delta(
+        &self,
+        build_id: i32,
+        last_change_id: Option<i32>,
+    ) -> Result<Option<(Vec<TimelineRecord>, Option<i32>)>> {
+        let mut cmd = Command::new("az");
+        cmd.args(["devops", "invoke"])
+            .args(["--area", "build"])
+            .args(["--resource", "timeline"])
+            .args(["--route-parameters",
+                   &format!("project={}", self.project),
+                   &format!("buildId={}", build_id)]);
+
+        // Add changeId for delta polling - returns empty if no changes
+        if let Some(change_id) = last_change_id {
+            cmd.args(["--query-parameters", &format!("changeId={}", change_id)]);
+        }
+
+        cmd.args(["--org", &self.organization])
+            .args(["--output", "json"]);
+
+        let output = cmd.output().await
+            .context("Failed to get timeline delta")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to get timeline: {}", stderr);
+        }
+
+        let response: TimelineResponse = serde_json::from_slice(&output.stdout)
+            .context("Failed to parse timeline response")?;
+
+        // If no records returned and we had a changeId, nothing changed
+        if response.records.is_empty() && last_change_id.is_some() {
+            return Ok(None);
+        }
+
+        Ok(Some((response.records, response.change_id)))
+    }
+
+    /// Get build log content
+    #[allow(dead_code)]
+    pub async fn get_build_log(&self, build_id: i32, log_id: i32) -> Result<Vec<String>> {
+        let output = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "build"])
+            .args(["--resource", "logs"])
+            .args(["--route-parameters", &format!("project={}", self.project), &format!("buildId={build_id}"), &format!("logId={log_id}")])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let err = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Failed to get log: {err}");
+        }
+
+        let response: BuildLogResponse = serde_json::from_slice(&output.stdout)?;
+        Ok(response.value)
+    }
+
+    /// Get pending approvals for the current user
+    #[allow(dead_code)]
+    pub async fn get_pending_approvals(&self) -> Result<Vec<Approval>> {
+        let output = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "release"])
+            .args(["--resource", "approvals"])
+            .args(["--route-parameters", &format!("project={}", self.project)])
+            .args(["--query-parameters", "statusFilter=pending", "includeMyGroupApprovals=true"])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output()
+            .await
+            .context("Failed to execute az devops invoke for approvals")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to get pending approvals: {}", stderr);
+        }
+
+        let response: ApprovalsResponse = serde_json::from_slice(&output.stdout)
+            .context("Failed to parse approvals response")?;
+        Ok(response.value)
+    }
+
+    /// Approve or reject a release approval
+    #[allow(dead_code)]
+    pub async fn update_approval(&self, approval_id: i32, status: &str, comments: Option<&str>) -> Result<Approval> {
+        // Azure DevOps Approvals API expects an array of approval objects with id included
+        let body = serde_json::json!([{
+            "id": approval_id,
+            "status": status,
+            "comments": comments.unwrap_or("")
+        }]);
+        let body_str = serde_json::to_string(&body)?;
+
+        // Write body to temp file since az devops invoke needs --in-file
+        let temp_path = std::env::temp_dir().join(format!("approval_{}.json", approval_id));
+        tokio::fs::write(&temp_path, &body_str).await?;
+
+        // Use bulk approvals endpoint (no approvalId in route) with array body
+        let output = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "release"])
+            .args(["--resource", "approvals"])
+            .args(["--route-parameters",
+                   &format!("project={}", self.project)])
+            .args(["--http-method", "PATCH"])
+            .args(["--api-version", "7.1"])
+            .args(["--in-file", temp_path.to_str().unwrap()])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output()
+            .await
+            .context("Failed to execute az devops invoke for approval update")?;
+
+        // Clean up temp file
+        let _ = tokio::fs::remove_file(&temp_path).await;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to update approval: {}", stderr);
+        }
+
+        // Response is an array, extract first element
+        let approvals: Vec<Approval> = serde_json::from_slice(&output.stdout)
+            .context("Failed to parse approval response")?;
+        approvals.into_iter().next()
+            .context("No approval returned in response")
+    }
+
+    /// Get release definition details (for trigger dialog)
+    #[allow(dead_code)]
+    pub async fn get_release_definition_detail(&self, definition_id: i32) -> Result<ReleaseDefinitionDetail> {
+        let output = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "release"])
+            .args(["--resource", "definitions"])
+            .args(["--route-parameters",
+                   &format!("project={}", self.project),
+                   &format!("definitionId={}", definition_id)])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output()
+            .await
+            .context("Failed to get release definition detail")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to get release definition: {}", stderr);
+        }
+
+        let detail: ReleaseDefinitionDetail = serde_json::from_slice(&output.stdout)
+            .context("Failed to parse release definition detail")?;
+        Ok(detail)
+    }
+
+    /// Create a new release
+    #[allow(dead_code)]
+    pub async fn create_release(&self, definition_id: i32, description: Option<&str>) -> Result<Release> {
+        let mut cmd = Command::new("az");
+        cmd.args(["pipelines", "release", "create"])
+            .args(["--definition-id", &definition_id.to_string()])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--output", "json"]);
+
+        if let Some(desc) = description {
+            cmd.args(["--description", desc]);
+        }
+
+        let output = cmd.output().await
+            .context("Failed to create release")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to create release: {}", stderr);
+        }
+
+        let release: Release = serde_json::from_slice(&output.stdout)
+            .context("Failed to parse created release")?;
+        Ok(release)
+    }
+
+    /// Cancel a running pipeline build
+    #[allow(dead_code)]
+    pub async fn cancel_pipeline_run(&self, run_id: i32) -> Result<()> {
+        let output = Command::new("az")
+            .args(["pipelines", "build", "update"])
+            .args(["--id", &run_id.to_string()])
+            .args(["--status", "cancelling"])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--output", "json"])
+            .output()
+            .await
+            .context("Failed to cancel pipeline run")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to cancel pipeline run: {}", stderr);
+        }
+
+        Ok(())
+    }
+
+    /// Retrigger a pipeline on the same branch (creates new run)
+    #[allow(dead_code)]
+    pub async fn retrigger_pipeline_run(&self, pipeline_id: i32, branch: &str) -> Result<PipelineRun> {
+        // Reuse the existing trigger_pipeline method
+        self.trigger_pipeline(pipeline_id, branch).await
+    }
+
+    /// Abandon/cancel a release
+    #[allow(dead_code)]
+    pub async fn cancel_release(&self, release_id: i32) -> Result<()> {
+        let body = serde_json::json!({
+            "status": "abandoned"
+        });
+        let body_str = serde_json::to_string(&body)?;
+
+        // Write body to temp file since az devops invoke needs --in-file
+        let temp_path = std::env::temp_dir().join(format!("release_cancel_{}.json", release_id));
+        tokio::fs::write(&temp_path, &body_str).await?;
+
+        let output = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "release"])
+            .args(["--resource", "releases"])
+            .args(["--route-parameters",
+                   &format!("project={}", self.project),
+                   &format!("releaseId={}", release_id)])
+            .args(["--http-method", "PATCH"])
+            .args(["--in-file", temp_path.to_str().unwrap()])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output()
+            .await
+            .context("Failed to cancel release")?;
+
+        // Clean up temp file
+        let _ = tokio::fs::remove_file(&temp_path).await;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to cancel release: {}", stderr);
+        }
+
+        Ok(())
+    }
+
+    /// Cancel a specific release environment/stage
+    #[allow(dead_code)]
+    pub async fn cancel_release_environment(&self, release_id: i32, environment_id: i32) -> Result<()> {
+        let body = serde_json::json!({
+            "status": "canceled",
+            "comment": "Canceled from lazyops"
+        });
+        let body_str = serde_json::to_string(&body)?;
+
+        // Write body to temp file since az devops invoke needs --in-file
+        let temp_path = std::env::temp_dir().join(format!("env_cancel_{}_{}.json", release_id, environment_id));
+        tokio::fs::write(&temp_path, &body_str).await?;
+
+        let output = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "release"])
+            .args(["--resource", "releases/environments"])
+            .args(["--route-parameters",
+                   &format!("project={}", self.project),
+                   &format!("releaseId={}", release_id),
+                   &format!("environmentId={}", environment_id)])
+            .args(["--http-method", "PATCH"])
+            .args(["--in-file", temp_path.to_str().unwrap()])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output()
+            .await
+            .context("Failed to cancel release environment")?;
+
+        // Clean up temp file
+        let _ = tokio::fs::remove_file(&temp_path).await;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to cancel release environment: {}", stderr);
+        }
+
+        Ok(())
+    }
+
+    /// Redeploy/retrigger a specific release environment/stage
+    #[allow(dead_code)]
+    pub async fn redeploy_release_environment(&self, release_id: i32, environment_id: i32) -> Result<()> {
+        let body = serde_json::json!({
+            "status": "inProgress",
+            "comment": "Redeployed from lazyops"
+        });
+        let body_str = serde_json::to_string(&body)?;
+
+        // Write body to temp file since az devops invoke needs --in-file
+        let temp_path = std::env::temp_dir().join(format!("env_redeploy_{}_{}.json", release_id, environment_id));
+        tokio::fs::write(&temp_path, &body_str).await?;
+
+        let output = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "release"])
+            .args(["--resource", "releases/environments"])
+            .args(["--route-parameters",
+                   &format!("project={}", self.project),
+                   &format!("releaseId={}", release_id),
+                   &format!("environmentId={}", environment_id)])
+            .args(["--http-method", "PATCH"])
+            .args(["--in-file", temp_path.to_str().unwrap()])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output()
+            .await
+            .context("Failed to redeploy release environment")?;
+
+        // Clean up temp file
+        let _ = tokio::fs::remove_file(&temp_path).await;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to redeploy release environment: {}", stderr);
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_work_item(id: i32, parent_id: Option<i32>) -> WorkItem {
+        WorkItem {
+            id,
+            rev: 1,
+            fields: WorkItemFields {
+                title: format!("Item {}", id),
+                state: "New".to_string(),
+                work_item_type: "Task".to_string(),
+                assigned_to: None,
+                iteration_path: None,
+                description: None,
+                parent_id,
+                created_date: None,
+                changed_date: None,
+                tags: None,
+                remaining_work: None,
+                original_estimate: None,
+                completed_work: None,
+            },
+            relations: None,
+            children: vec![],
+            depth: 0,
+        }
+    }
+
+    #[test]
+    fn test_build_hierarchy_empty() {
+        let result = AzureCli::build_hierarchy(vec![]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_build_hierarchy_single_root_item() {
+        let items = vec![make_work_item(1, None)];
+        let result = AzureCli::build_hierarchy(items);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[0].depth, 0);
+        assert!(result[0].children.is_empty());
+    }
+
+    #[test]
+    fn test_build_hierarchy_multiple_root_items() {
+        let items = vec![
+            make_work_item(1, None),
+            make_work_item(2, None),
+            make_work_item(3, None),
+        ];
+        let result = AzureCli::build_hierarchy(items);
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[0].depth, 0);
+        assert_eq!(result[1].id, 2);
+        assert_eq!(result[1].depth, 0);
+        assert_eq!(result[2].id, 3);
+        assert_eq!(result[2].depth, 0);
+
+        // All should have no children
+        for item in &result {
+            assert!(item.children.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_build_hierarchy_parent_child_relationship() {
+        let items = vec![
+            make_work_item(1, None),      // Parent
+            make_work_item(2, Some(1)),   // Child
+        ];
+        let result = AzureCli::build_hierarchy(items);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[0].depth, 0);
+        assert_eq!(result[0].children.len(), 1);
+
+        let child = &result[0].children[0];
+        assert_eq!(child.id, 2);
+        assert_eq!(child.depth, 1);
+        assert!(child.children.is_empty());
+    }
+
+    #[test]
+    fn test_build_hierarchy_multi_level() {
+        let items = vec![
+            make_work_item(1, None),      // Grandparent
+            make_work_item(2, Some(1)),   // Parent
+            make_work_item(3, Some(2)),   // Child
+        ];
+        let result = AzureCli::build_hierarchy(items);
+
+        assert_eq!(result.len(), 1);
+
+        // Grandparent level
+        let grandparent = &result[0];
+        assert_eq!(grandparent.id, 1);
+        assert_eq!(grandparent.depth, 0);
+        assert_eq!(grandparent.children.len(), 1);
+
+        // Parent level
+        let parent = &grandparent.children[0];
+        assert_eq!(parent.id, 2);
+        assert_eq!(parent.depth, 1);
+        assert_eq!(parent.children.len(), 1);
+
+        // Child level
+        let child = &parent.children[0];
+        assert_eq!(child.id, 3);
+        assert_eq!(child.depth, 2);
+        assert!(child.children.is_empty());
+    }
+
+    #[test]
+    fn test_build_hierarchy_orphan_children() {
+        // Child whose parent_id points to non-existent item should be root
+        let items = vec![
+            make_work_item(1, None),
+            make_work_item(2, Some(999)),  // Parent 999 doesn't exist
+        ];
+        let result = AzureCli::build_hierarchy(items);
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[0].depth, 0);
+        assert_eq!(result[1].id, 2);
+        assert_eq!(result[1].depth, 0);  // Orphan treated as root
+
+        // Both should have no children
+        assert!(result[0].children.is_empty());
+        assert!(result[1].children.is_empty());
+    }
+
+    #[test]
+    fn test_build_hierarchy_order_preservation() {
+        // Items should maintain WIQL order (important for StackRank)
+        let items = vec![
+            make_work_item(3, None),
+            make_work_item(1, None),
+            make_work_item(2, None),
+        ];
+        let result = AzureCli::build_hierarchy(items);
+
+        assert_eq!(result.len(), 3);
+        // Order should be preserved: 3, 1, 2
+        assert_eq!(result[0].id, 3);
+        assert_eq!(result[1].id, 1);
+        assert_eq!(result[2].id, 2);
+    }
+
+    #[test]
+    fn test_build_hierarchy_children_order_preservation() {
+        // Children should also maintain original order
+        let items = vec![
+            make_work_item(1, None),
+            make_work_item(5, Some(1)),   // Child added in order 5, 3, 4
+            make_work_item(3, Some(1)),
+            make_work_item(4, Some(1)),
+        ];
+        let result = AzureCli::build_hierarchy(items);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].children.len(), 3);
+
+        // Children should appear in original order: 5, 3, 4
+        assert_eq!(result[0].children[0].id, 5);
+        assert_eq!(result[0].children[1].id, 3);
+        assert_eq!(result[0].children[2].id, 4);
+    }
+
+    #[test]
+    fn test_build_hierarchy_complex_tree() {
+        // Multiple parents with multiple children
+        let items = vec![
+            make_work_item(1, None),      // Root 1
+            make_work_item(2, Some(1)),   // Child of 1
+            make_work_item(3, Some(1)),   // Child of 1
+            make_work_item(4, None),      // Root 2
+            make_work_item(5, Some(4)),   // Child of 4
+            make_work_item(6, Some(2)),   // Grandchild of 1
+        ];
+        let result = AzureCli::build_hierarchy(items);
+
+        assert_eq!(result.len(), 2);
+
+        // First root
+        let root1 = &result[0];
+        assert_eq!(root1.id, 1);
+        assert_eq!(root1.depth, 0);
+        assert_eq!(root1.children.len(), 2);
+
+        // Children of root1
+        assert_eq!(root1.children[0].id, 2);
+        assert_eq!(root1.children[0].depth, 1);
+        assert_eq!(root1.children[1].id, 3);
+        assert_eq!(root1.children[1].depth, 1);
+
+        // Grandchild of root1
+        assert_eq!(root1.children[0].children.len(), 1);
+        assert_eq!(root1.children[0].children[0].id, 6);
+        assert_eq!(root1.children[0].children[0].depth, 2);
+
+        // Second root
+        let root2 = &result[1];
+        assert_eq!(root2.id, 4);
+        assert_eq!(root2.depth, 0);
+        assert_eq!(root2.children.len(), 1);
+        assert_eq!(root2.children[0].id, 5);
+        assert_eq!(root2.children[0].depth, 1);
+    }
+
+    #[test]
+    fn test_build_hierarchy_mixed_orphans_and_valid() {
+        // Mix of valid parent-child relationships and orphans
+        let items = vec![
+            make_work_item(1, None),
+            make_work_item(2, Some(1)),   // Valid child
+            make_work_item(3, Some(999)), // Orphan
+            make_work_item(4, Some(1)),   // Valid child
+        ];
+        let result = AzureCli::build_hierarchy(items);
+
+        assert_eq!(result.len(), 2);
+
+        // First root with valid children
+        assert_eq!(result[0].id, 1);
+        assert_eq!(result[0].children.len(), 2);
+        assert_eq!(result[0].children[0].id, 2);
+        assert_eq!(result[0].children[1].id, 4);
+
+        // Orphan as separate root
+        assert_eq!(result[1].id, 3);
+        assert_eq!(result[1].depth, 0);
+        assert!(result[1].children.is_empty());
     }
 }

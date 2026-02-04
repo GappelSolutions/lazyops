@@ -35,7 +35,7 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
     let chars: Vec<char> = s.chars().collect();
     if chars.len() > max_chars {
         let truncated: String = chars[..max_chars.saturating_sub(3)].iter().collect();
-        format!("{}...", truncated)
+        format!("{truncated}...")
     } else {
         s.to_string()
     }
@@ -80,7 +80,7 @@ fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selec
 
     // Hours display (remaining work)
     let hours = item.fields.remaining_work
-        .map(|h| format!("{:.0}h", h))
+        .map(|h| format!("{h:.0}h"))
         .unwrap_or_default();
 
     // Calculate prefix width: state(2) + indent + expand(2) + type(2) + powerline(1) + id + powerline(2) + initials_badge(4-5) + space(1)
@@ -94,7 +94,7 @@ fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selec
     let first_icon = if vi.is_pinned {
         Span::styled("⚑ ", Style::default().fg(Color::Rgb(220, 180, 80)))
     } else {
-        Span::styled(format!("{} ", state_icon), Style::default().fg(state_color))
+        Span::styled(format!("{state_icon} "), Style::default().fg(state_color))
     };
 
     // Build the line with spans - state/pin first, then expand, then content
@@ -102,7 +102,7 @@ fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selec
         first_icon,
         Span::raw(indent),
         Span::raw(expand_indicator),
-        Span::styled(format!("{} ", type_icon), Style::default().fg(type_color)),
+        Span::styled(format!("{type_icon} "), Style::default().fg(type_color)),
         Span::styled("\u{e0b6}", Style::default().fg(id_bg)),
         Span::styled(
             format!("#{}", item.id),
@@ -114,11 +114,11 @@ fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selec
     // Initials badge - use spaces on selected row to avoid powerline artifacts
     if is_selected {
         spans.push(Span::styled(" ", Style::default()));
-        spans.push(Span::styled(format!("{}", initials), Style::default().fg(Color::Rgb(240, 250, 255)).bg(Color::Rgb(60, 90, 100))));
+        spans.push(Span::styled(initials.to_string(), Style::default().fg(Color::Rgb(240, 250, 255)).bg(Color::Rgb(60, 90, 100))));
         spans.push(Span::styled(" ", Style::default()));
     } else {
         spans.push(Span::styled("\u{e0b6}", Style::default().fg(Color::Rgb(45, 70, 80))));
-        spans.push(Span::styled(format!("{}", initials), Style::default().fg(Color::Rgb(200, 220, 230)).bg(Color::Rgb(45, 70, 80))));
+        spans.push(Span::styled(initials.to_string(), Style::default().fg(Color::Rgb(200, 220, 230)).bg(Color::Rgb(45, 70, 80))));
         spans.push(Span::styled("\u{e0b4}", Style::default().fg(Color::Rgb(45, 70, 80))));
     }
 

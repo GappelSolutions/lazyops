@@ -3,6 +3,7 @@ mod azure;
 mod cache;
 mod config;
 mod events;
+mod terminal;
 mod ui;
 
 use app::App;

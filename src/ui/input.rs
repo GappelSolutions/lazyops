@@ -76,7 +76,7 @@ fn draw_searchable_dropdown(f: &mut Frame, app: &mut App, area: Rect, title: &st
     let search_block = Block::default()
         .borders(Borders::ALL)
         .title(title);
-    let display_text = format!("🔍 {}", filter_input);
+    let display_text = format!("🔍 {filter_input}");
     let search_para = Paragraph::new(display_text).block(search_block);
     f.render_widget(search_para, chunks[0]);
 
@@ -143,7 +143,7 @@ pub fn draw_filter_state_dropdown(f: &mut Frame, app: &mut App, area: Rect) {
             let selected = app.filter_state.as_deref() == Some(*s);
             let (icon, color) = state_icon_and_color(s);
             let line = Line::from(vec![
-                Span::styled(format!("{} ", icon), Style::default().fg(color)),
+                Span::styled(format!("{icon} "), Style::default().fg(color)),
                 Span::styled(
                     s.to_string(),
                     if selected { Style::default().add_modifier(Modifier::BOLD) } else { Style::default() }
@@ -173,7 +173,7 @@ pub fn draw_filter_assignee_dropdown(f: &mut Frame, app: &mut App, area: Rect) {
             let line = if is_highlighted {
                 Line::from(vec![
                     Span::styled(" ", Style::default()),
-                    Span::styled(format!("{}", initials), Style::default().fg(Color::Rgb(240, 250, 255)).bg(Color::Rgb(60, 90, 100))),
+                    Span::styled(initials.to_string(), Style::default().fg(Color::Rgb(240, 250, 255)).bg(Color::Rgb(60, 90, 100))),
                     Span::styled("  ", Style::default()),
                     Span::styled(
                         a.clone(),
@@ -183,7 +183,7 @@ pub fn draw_filter_assignee_dropdown(f: &mut Frame, app: &mut App, area: Rect) {
             } else {
                 Line::from(vec![
                     Span::styled("\u{e0b6}", Style::default().fg(Color::Rgb(45, 70, 80))),
-                    Span::styled(format!("{}", initials), Style::default().fg(Color::Rgb(200, 220, 230)).bg(Color::Rgb(45, 70, 80))),
+                    Span::styled(initials.to_string(), Style::default().fg(Color::Rgb(200, 220, 230)).bg(Color::Rgb(45, 70, 80))),
                     Span::styled("\u{e0b4} ", Style::default().fg(Color::Rgb(45, 70, 80))),
                     Span::styled(
                         a.clone(),
@@ -218,7 +218,7 @@ fn draw_fuzzy_dropdown(f: &mut Frame, app: &mut App, area: Rect, title: &str, it
     let search_area = Rect::new(content.x, content.y, content.width, 2);
 
     // Display text with prompt
-    let display_text = format!("🔍 {}", filter_input);
+    let display_text = format!("🔍 {filter_input}");
     let search_para = Paragraph::new(display_text.as_str())
         .style(Style::default().fg(Color::White));
     f.render_widget(search_para, search_area);

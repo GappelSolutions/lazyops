@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
     pub projects: Vec<ProjectConfig>,
@@ -90,18 +90,6 @@ pub struct Theme {
     pub type_task: String,
     pub type_feature: String,
     pub type_epic: String,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            projects: vec![],
-            theme: Theme::default(),
-            settings: Settings::default(),
-            keybindings: Keybindings::default(),
-            default_project: None,
-        }
-    }
 }
 
 impl Default for Settings {
@@ -299,5 +287,188 @@ impl Theme {
             "Removed" => Color::Rgb(35, 35, 35),
             _ => Color::Rgb(40, 40, 40),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Color;
+
+    // Tests for Theme::parse_color
+    #[test]
+    fn test_parse_color_valid_blue() {
+        let theme = Theme::default();
+        let color = theme.parse_color("#61afef");
+        assert_eq!(color, Color::Rgb(97, 175, 239));
+    }
+
+    #[test]
+    fn test_parse_color_valid_black() {
+        let theme = Theme::default();
+        let color = theme.parse_color("#000000");
+        assert_eq!(color, Color::Rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn test_parse_color_valid_white() {
+        let theme = Theme::default();
+        let color = theme.parse_color("#ffffff");
+        assert_eq!(color, Color::Rgb(255, 255, 255));
+    }
+
+    #[test]
+    fn test_parse_color_invalid_no_hash() {
+        let theme = Theme::default();
+        let color = theme.parse_color("61afef");
+        assert_eq!(color, Color::White);
+    }
+
+    #[test]
+    fn test_parse_color_invalid_wrong_length() {
+        let theme = Theme::default();
+        let color = theme.parse_color("#61af");
+        assert_eq!(color, Color::White);
+    }
+
+    #[test]
+    fn test_parse_color_invalid_chars() {
+        let theme = Theme::default();
+        let color = theme.parse_color("#gggggg");
+        assert_eq!(color, Color::White);
+    }
+
+    // Tests for Theme::type_color
+    #[test]
+    fn test_type_color_bug() {
+        let theme = Theme::default();
+        let color = theme.type_color("Bug");
+        assert_eq!(color, Color::Rgb(224, 108, 117)); // #e06c75
+    }
+
+    #[test]
+    fn test_type_color_user_story() {
+        let theme = Theme::default();
+        let color = theme.type_color("User Story");
+        assert_eq!(color, Color::Rgb(198, 120, 221)); // #c678dd
+    }
+
+    #[test]
+    fn test_type_color_task() {
+        let theme = Theme::default();
+        let color = theme.type_color("Task");
+        assert_eq!(color, Color::Rgb(97, 175, 239)); // #61afef
+    }
+
+    #[test]
+    fn test_type_color_unknown() {
+        let theme = Theme::default();
+        let color = theme.type_color("Unknown Type");
+        assert_eq!(color, Color::Rgb(171, 178, 191)); // text color #abb2bf
+    }
+
+    // Tests for Theme::state_color
+    #[test]
+    fn test_state_color_new() {
+        let theme = Theme::default();
+        let color = theme.state_color("New");
+        assert_eq!(color, Color::Rgb(140, 140, 140));
+    }
+
+    #[test]
+    fn test_state_color_in_progress() {
+        let theme = Theme::default();
+        let color = theme.state_color("In Progress");
+        assert_eq!(color, Color::Rgb(200, 180, 60));
+    }
+
+    #[test]
+    fn test_state_color_done() {
+        let theme = Theme::default();
+        let color = theme.state_color("Done");
+        assert_eq!(color, Color::Rgb(80, 200, 120));
+    }
+
+    #[test]
+    fn test_state_color_unknown() {
+        let theme = Theme::default();
+        let color = theme.state_color("Unknown State");
+        assert_eq!(color, Color::Rgb(140, 140, 140)); // Gray fallback
+    }
+
+    // Tests for Settings::get_states
+    #[test]
+    fn test_get_states_empty_returns_defaults() {
+        let settings = Settings::default();
+        let states = settings.get_states();
+        assert_eq!(states, vec![
+            "All",
+            "New",
+            "In Progress",
+            "Done In Stage",
+            "Done Not Released",
+            "Done",
+            "Tested w/Bugs",
+            "Removed"
+        ]);
+    }
+
+    #[test]
+    fn test_get_states_custom_returns_custom() {
+        let settings = Settings {
+            refresh_interval: 300,
+            page_jump: 10,
+            api_timeout: 30,
+            api_delay_ms: 50,
+            cache_expiry: 3600,
+            states: vec!["Open".to_string(), "Closed".to_string()],
+        };
+        let states = settings.get_states();
+        assert_eq!(states, vec!["Open", "Closed"]);
+    }
+
+    // Tests for default implementations
+    #[test]
+    fn test_settings_default_values() {
+        let settings = Settings::default();
+        assert_eq!(settings.refresh_interval, 300);
+        assert_eq!(settings.page_jump, 10);
+        assert_eq!(settings.api_timeout, 30);
+        assert_eq!(settings.api_delay_ms, 50);
+        assert_eq!(settings.cache_expiry, 3600);
+        assert!(settings.states.is_empty());
+    }
+
+    #[test]
+    fn test_keybindings_default_vim_style() {
+        let keys = Keybindings::default();
+        assert_eq!(keys.down, 'j');
+        assert_eq!(keys.up, 'k');
+        assert_eq!(keys.left, 'h');
+        assert_eq!(keys.right, 'l');
+        assert_eq!(keys.top, 'g');
+        assert_eq!(keys.bottom, 'G');
+        assert_eq!(keys.open, 'o');
+        assert_eq!(keys.quit, 'q');
+    }
+
+    #[test]
+    fn test_theme_default_one_dark_colors() {
+        let theme = Theme::default();
+        assert_eq!(theme.border, "#5c6370");
+        assert_eq!(theme.border_active, "#61afef");
+        assert_eq!(theme.selected_bg, "#2c323c");
+        assert_eq!(theme.text, "#abb2bf");
+        assert_eq!(theme.text_muted, "#5c6370");
+        assert_eq!(theme.highlight, "#61afef");
+        assert_eq!(theme.state_new, "#61afef");
+        assert_eq!(theme.state_active, "#e5c07b");
+        assert_eq!(theme.state_resolved, "#98c379");
+        assert_eq!(theme.state_closed, "#5c6370");
+        assert_eq!(theme.type_bug, "#e06c75");
+        assert_eq!(theme.type_story, "#c678dd");
+        assert_eq!(theme.type_task, "#61afef");
+        assert_eq!(theme.type_feature, "#56b6c2");
+        assert_eq!(theme.type_epic, "#d19a66");
     }
 }

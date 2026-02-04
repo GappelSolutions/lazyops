@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
                             items.iter().map(|i| 1 + count_all(&i.children)).sum()
                         }
                         let total = count_all(&items);
-                        println!("  Total items (including children): {}", total);
+                        println!("  Total items (including children): {total}");
 
                         // Show hierarchy
                         fn print_tree(items: &[lazyops::azure::WorkItem], indent: usize) {
@@ -65,12 +65,12 @@ async fn main() -> anyhow::Result<()> {
                         println!("\n  Hierarchy (first 10 roots):");
                         print_tree(&items[..items.len().min(10)], 1);
                     }
-                    Err(e) => println!("✗ Failed: {}", e),
+                    Err(e) => println!("✗ Failed: {e}"),
                 }
 
             }
         }
-        Err(e) => println!("✗ Failed: {}", e),
+        Err(e) => println!("✗ Failed: {e}"),
     }
 
     println!("\n=== Tests Complete ===");

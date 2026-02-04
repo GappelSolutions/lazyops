@@ -1,9 +1,12 @@
-use crate::app::App;
+use crate::app::{App, View};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-pub fn draw_popup(f: &mut Frame, _app: &App, area: Rect) {
-    let help_text = r#"
+pub fn draw_popup(f: &mut Frame, app: &App, area: Rect) {
+    let (title, help_text) = match app.current_view {
+        View::Tasks => (
+            " Tasks Help - Press ? or Esc to close ",
+            r#"
 NAVIGATION
   j/k ↑/↓       Move up/down
   h/l           Focus left/right panel
@@ -26,19 +29,63 @@ ACTIONS
   p             Pin/unpin item
   y             Copy ticket ID
 
-SELECTION
+VIEWS
+  1             Tasks view
+  2             CI/CD view
   I             Select sprint
   P             Select project
-  R             Refresh data
+  r             Refresh data
   ?             Toggle help
   q             Quit
-"#;
+"#
+        ),
+        View::CICD => (
+            " CI/CD Help - Press ? or Esc to close ",
+            r#"
+NAVIGATION
+  j/k ↑/↓       Move up/down
+  h             Focus Pipelines pane
+  l             Focus Releases pane
+  Enter         Drill into runs/releases
+  Esc           Go back / Exit drill-down
+
+PIPELINES
+  Enter         View pipeline runs
+  p             Pin/unpin pipeline
+  o             Open in browser
+  w             Toggle live preview (auto-refresh)
+
+RELEASES
+  Enter         View releases
+  p             Pin/unpin release
+  o             Open in browser
+
+LOG VIEWER
+  e             Edit/open log in nvim
+  Ctrl+q        Exit nvim viewer
+
+ACTIONS
+  T             Trigger new release
+  a             Approve selected stage
+  A             Approve ALL pending stages
+  x             Reject stage (TODO)
+
+VIEWS
+  1             Tasks view
+  2             CI/CD view
+  P             Select project
+  r             Refresh data
+  ?             Toggle help
+  q             Quit
+"#
+        ),
+    };
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Help - Press ? or Esc to close ");
+        .title(title);
 
-    let inner = super::centered_rect(50, 24, area);
+    let inner = super::centered_rect(50, 30, area);
     f.render_widget(Clear, inner);
 
     let paragraph = Paragraph::new(help_text)

@@ -128,19 +128,19 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
         Span::styled(" Assignee", Style::default().fg(label_fg).bg(label_bg)),
         Span::styled("\u{e0b4} ", Style::default().fg(label_bg)),
         Span::styled("\u{e0b6}", Style::default().fg(assignee_bg)),
-        Span::styled(format!(" {} ", assigned), Style::default().fg(assignee_fg).bg(assignee_bg)),
+        Span::styled(format!(" {assigned} "), Style::default().fg(assignee_fg).bg(assignee_bg)),
         Span::styled("\u{e0b4}", Style::default().fg(assignee_bg)),
     ]));
 
     // Sprint/Iteration
     if let Some(iteration) = &item.fields.iteration_path {
-        let sprint = iteration.split('\\').last().unwrap_or(iteration);
+        let sprint = iteration.split('\\').next_back().unwrap_or(iteration);
         let sprint_bg = Color::Rgb(35, 45, 65);
         lines.push(Line::from(vec![
             Span::styled(" Sprint", Style::default().fg(label_fg).bg(label_bg)),
             Span::styled("\u{e0b4} ", Style::default().fg(label_bg)),
             Span::styled("\u{e0b6}", Style::default().fg(sprint_bg)),
-            Span::styled(format!(" {} ", sprint), Style::default().fg(Color::Rgb(180, 200, 255)).bg(sprint_bg)),
+            Span::styled(format!(" {sprint} "), Style::default().fg(Color::Rgb(180, 200, 255)).bg(sprint_bg)),
             Span::styled("\u{e0b4}", Style::default().fg(sprint_bg)),
         ]));
     }
@@ -152,7 +152,7 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
             Span::styled(" Estimate", Style::default().fg(label_fg).bg(label_bg)),
             Span::styled("\u{e0b4} ", Style::default().fg(label_bg)),
             Span::styled("\u{e0b6}", Style::default().fg(estimate_bg)),
-            Span::styled(format!(" {:.0}h ", hours), Style::default().fg(Color::Rgb(255, 200, 100)).bg(estimate_bg)),
+            Span::styled(format!(" {hours:.0}h "), Style::default().fg(Color::Rgb(255, 200, 100)).bg(estimate_bg)),
             Span::styled("\u{e0b4}", Style::default().fg(estimate_bg)),
         ]));
     }
@@ -167,7 +167,7 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
         for tag in tags.split(';').map(|t| t.trim()) {
             if !tag.is_empty() {
                 tag_spans.push(Span::styled("\u{e0b6}", Style::default().fg(tag_bg)));
-                tag_spans.push(Span::styled(format!(" {} ", tag), Style::default().fg(Color::Rgb(200, 180, 255)).bg(tag_bg)));
+                tag_spans.push(Span::styled(format!(" {tag} "), Style::default().fg(Color::Rgb(200, 180, 255)).bg(tag_bg)));
                 tag_spans.push(Span::styled("\u{e0b4}", Style::default().fg(tag_bg)));
                 tag_spans.push(Span::raw(" "));
             }
@@ -288,9 +288,7 @@ fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
     // Build items with group headers
     let mut items: Vec<ListItem> = Vec::new();
     let mut current_group: Option<&str> = None;
-    let mut selectable_idx = 0;
-
-    for r in &refs {
+    for (selectable_idx, r) in refs.iter().enumerate() {
         let name = r.attributes.name.as_deref().unwrap_or("");
         let group = if r.rel == "System.LinkTypes.Hierarchy-Forward" || name == "Child" {
             "Children"
@@ -326,9 +324,9 @@ fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
 
             let count = group_counts.get(group).unwrap_or(&0);
             let header = Line::from(vec![
-                Span::styled(format!(" {} ", icon), Style::default().fg(color)),
+                Span::styled(format!(" {icon} "), Style::default().fg(color)),
                 Span::styled(group, Style::default().fg(color).add_modifier(Modifier::BOLD)),
-                Span::styled(format!(" ({})", count), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!(" ({count})"), Style::default().fg(Color::DarkGray)),
             ]);
             items.push(ListItem::new(header));
         }
@@ -361,7 +359,6 @@ fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
         ]);
 
         items.push(ListItem::new(line).style(base_style));
-        selectable_idx += 1;
     }
 
     let visible_height = inner.height as usize;
@@ -371,10 +368,9 @@ fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
     let selected_visual_row = if let Some(sel_idx) = selected_idx {
         // Count headers and spacing before selected item
         let mut visual_row = 0;
-        let mut item_idx = 0;
         let mut last_group: Option<&str> = None;
 
-        for r in &refs {
+        for (item_idx, r) in refs.iter().enumerate() {
             let name = r.attributes.name.as_deref().unwrap_or("");
             let group = if r.rel == "System.LinkTypes.Hierarchy-Forward" || name == "Child" {
                 "Children"
@@ -402,7 +398,6 @@ fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
                 break;
             }
             visual_row += 1;
-            item_idx += 1;
         }
         visual_row
     } else {
