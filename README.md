@@ -2,49 +2,68 @@
 
 A lazygit-style TUI for Azure DevOps. Browse sprints, manage work items, monitor CI/CD pipelines, and trigger releases - all from your terminal.
 
+## Why
+
+Microsoft can't build good software. Azure DevOps is slow, bloated, and disrespectful of your time—just like Teams, Outlook, and most of their "modern" software. Changing a ticket state requires multiple page loads. Searching takes seconds. The API needs two round-trips for basic queries.
+
+This tool gives you:
+
+- **Instant** keyboard-driven navigation (not 3-second page loads)
+- Quick state changes without the UI overhead
+- Works in your tmux/terminal workflow
+
+See [TODO.md](TODO.md) for the roadmap and planned features.
+
 **Tasks View**
+
 ```
- Tasks                               │ Preview
- ▸ Sprint 42 (current)               │ Details │ References
-─────────────────────────────────────┼─────────────────────────────────────────
- * ◐ ⊗ #12847 Fix login redirect    │ #12847 Fix login redirect loop
-   ○ ◈ #12845 User profile page     │
-     ○ ☑ #12846 Add avatar upload   │ State:    In Progress
-   ◐ ◈ #12843 Dark mode support     │ Type:     Bug
-     ● ☑ #12844 Theme toggle        │ Assigned: john.doe@company.com
-   ○ ⊗ #12841 API timeout errors    │
-                                     │ Description:
-                                     │ Users are experiencing redirect loops
-                                     │ after login when the session cookie...
-─────────────────────────────────────┼─────────────────────────────────────────
- [1] Tasks  [2] CI|CD                │ Tags: authentication, urgent
-─────────────────────────────────────┴─────────────────────────────────────────
- ↑↓ navigate  o open  s state  ? help          Sprint 42 │ MyProject │ cache: 5m
+┌─────────────────────────────────────┬─────────────────────────────────────────┐
+│ Tasks                               │ Preview                                 │
+│ ▸ Sprint 42 (current)               │ Details │ References                    │
+├─────────────────────────────────────┼─────────────────────────────────────────┤
+│ * ◐ ⊗ #12847 Fix login redirect     │ #12847 Fix login redirect loop          │
+│   ○ ◈ #12845 User profile page      │                                         │
+│     ○ ☑ #12846 Add avatar upload    │ State:    In Progress                   │
+│   ◐ ◈ #12843 Dark mode support      │ Type:     Bug                           │
+│     ● ☑ #12844 Theme toggle         │ Assigned: john.doe@company.com          │
+│   ○ ⊗ #12841 API timeout errors     │                                         │
+│                                     │ Description:                            │
+│                                     │ Users are experiencing redirect loops   │
+│                                     │ after login when the session cookie...  │
+├─────────────────────────────────────┼─────────────────────────────────────────┤
+│ [1] Tasks  [2] CI|CD                │ Tags: authentication, urgent            │
+├─────────────────────────────────────┴─────────────────────────────────────────┤
+│ ↑↓ navigate  o open  s state  ? help          Sprint 42 │ MyProject │ cache: 5m│
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **CI/CD View**
+
 ```
- Pipelines                           │ Preview
-─────────────────────────────────────┼─────────────────────────────────────────
- * CustomerPortal.CI                 │ Build #2847 — main
-   WebAPI.Build                      │─────────────────────────────────────────
-   Infrastructure.Deploy             │ ● Build
-─────────────────────────────────────│   ● Restore                       00:23
- Releases                            │   ● Build                         01:45
- * CustomerPortal.Release            │   ◐ Test                      running...
-   WebAPI.Release                    │   ○ Publish                      pending
-                                     │ ○ Deploy
-                                     │   ○ Stage                        pending
-                                     │   ○ Production                   pending
-─────────────────────────────────────┼─────────────────────────────────────────
- [1] Tasks  [2] CI|CD                │ Triggered by: john.doe │ 3 min ago
-─────────────────────────────────────┴─────────────────────────────────────────
- ↑↓ navigate  n trigger  x cancel  e logs  ? help     MyProject │ ● 2 in progress
+┌─────────────────────────────────────┬─────────────────────────────────────────┐
+│ Pipelines                           │ Preview                                 │
+├─────────────────────────────────────┼─────────────────────────────────────────┤
+│ * frontend-app.CI                   │ Build #2847 — main                      │
+│   backend-api.CI                    │─────────────────────────────────────────│
+│   shared-libs.CI                    │ ● Build                                 │
+├─────────────────────────────────────│   ● Restore                       00:23 │
+│ Releases                            │   ● Build                         01:45 │
+│ * frontend-app.CD                   │   ◐ Test                      running...│
+│   backend-api.CD                    │   ○ Publish                     pending │
+│                                     │ ○ Deploy                                │
+│                                     │   ○ Stage                       pending │
+│                                     │   ○ Production                  pending │
+├─────────────────────────────────────┼─────────────────────────────────────────┤
+│ [1] Tasks  [2] CI|CD                │ Triggered by: john.doe │ 3 min ago      │
+├─────────────────────────────────────┴─────────────────────────────────────────┤
+│ ↑↓ navigate  n trigger  x cancel  e logs  ? help     MyProject │ ● 2 in progress│
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
 
 ### Work Items (Press `1`)
+
 - **Sprint View** - Browse work items by sprint with hierarchical parent/child display
 - **Work Item Details** - View descriptions, state, assignee, tags, estimates
 - **References** - See linked PRs, commits, attachments, and child items
@@ -52,6 +71,7 @@ A lazygit-style TUI for Azure DevOps. Browse sprints, manage work items, monitor
 - **Filtering** - Search by text, filter by state or assignee
 
 ### CI/CD (Press `2`)
+
 - **Pipelines** - Browse pipeline definitions, runs, tasks, and logs
 - **Releases** - Browse release definitions, deployments, stages, and tasks
 - **Actions** - Trigger pipelines, create releases, approve/reject deployments
@@ -60,6 +80,7 @@ A lazygit-style TUI for Azure DevOps. Browse sprints, manage work items, monitor
 - **Pinning** - Pin frequently used pipelines and releases
 
 ### General
+
 - **Caching** - Fast startup with intelligent caching
 - **Customizable** - Themes, keybindings, and settings via config file
 
@@ -157,6 +178,7 @@ select_project = "P"
 ```
 
 Config file locations (checked in order):
+
 1. `~/.config/lazyops/config.toml`
 2. `~/Library/Application Support/lazyops/config.toml` (macOS)
 3. `~/.lazyops.toml`
@@ -165,72 +187,73 @@ Config file locations (checked in order):
 
 ### Views
 
-| Key | Action |
-|-----|--------|
+| Key | Action               |
+| --- | -------------------- |
 | `1` | Switch to Tasks view |
 | `2` | Switch to CI/CD view |
 
 ### Navigation
 
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Move down / up |
-| `h` / `l` | Focus left / right panel |
-| `g` / `G` | Go to top / bottom |
-| `Ctrl+d` / `Ctrl+u` | Page down / up |
-| `Tab` | Switch preview tabs (Details / References) |
-| `Enter` | Expand / collapse item (or drill down in CI/CD) |
-| `Esc` | Go back / exit drill-down |
-| `t` | Toggle expand all |
+| Key                 | Action                                          |
+| ------------------- | ----------------------------------------------- |
+| `j` / `k`           | Move down / up                                  |
+| `h` / `l`           | Focus left / right panel                        |
+| `g` / `G`           | Go to top / bottom                              |
+| `Ctrl+d` / `Ctrl+u` | Page down / up                                  |
+| `Tab`               | Switch preview tabs (Details / References)      |
+| `Enter`             | Expand / collapse item (or drill down in CI/CD) |
+| `Esc`               | Go back / exit drill-down                       |
+| `t`                 | Toggle expand all                               |
 
 ### Filters
 
-| Key | Action |
-|-----|--------|
-| `f` | Search by text |
-| `s` | Filter by state |
+| Key | Action             |
+| --- | ------------------ |
+| `f` | Search by text     |
+| `s` | Filter by state    |
 | `a` | Filter by assignee |
-| `c` | Clear all filters |
+| `c` | Clear all filters  |
 
 ### Actions
 
-| Key | Action |
-|-----|--------|
-| `o` | Open in browser |
-| `S` | Edit state |
-| `A` | Edit assignee |
+| Key | Action           |
+| --- | ---------------- |
+| `o` | Open in browser  |
+| `S` | Edit state       |
+| `A` | Edit assignee    |
 | `p` | Pin / unpin item |
-| `y` | Copy ticket ID |
+| `y` | Copy ticket ID   |
 
 ### CI/CD Actions
 
-| Key | Action |
-|-----|--------|
-| `Enter` | Drill into runs/stages/tasks |
-| `Esc` | Go back up |
-| `n` | Trigger new pipeline run / Create release |
-| `x` | Cancel running build / Abandon release |
-| `r` | Retrigger / Redeploy |
-| `e` | View logs in terminal (nvim) |
-| `a` | Approve pending deployment |
-| `d` | Reject pending deployment |
-| `L` | Load all runs (not just recent 10) |
+| Key     | Action                                    |
+| ------- | ----------------------------------------- |
+| `Enter` | Drill into runs/stages/tasks              |
+| `Esc`   | Go back up                                |
+| `n`     | Trigger new pipeline run / Create release |
+| `x`     | Cancel running build / Abandon release    |
+| `r`     | Retrigger / Redeploy                      |
+| `e`     | View logs in terminal (nvim)              |
+| `a`     | Approve pending deployment                |
+| `d`     | Reject pending deployment                 |
+| `L`     | Load all runs (not just recent 10)        |
 
 ### Selection
 
-| Key | Action |
-|-----|--------|
-| `I` | Select sprint |
+| Key | Action         |
+| --- | -------------- |
+| `I` | Select sprint  |
 | `P` | Select project |
-| `R` | Refresh data |
-| `?` | Toggle help |
-| `q` | Quit |
+| `R` | Refresh data   |
+| `?` | Toggle help    |
+| `q` | Quit           |
 
 ## Usage Tips
 
 ### CI/CD View
 
 Press `2` to switch to the CI/CD view:
+
 - **Left panel**: Pipelines (top) and Releases (bottom)
 - **Right panel**: Preview with build timeline, logs, or stage details
 - Press `Enter` to drill down: Definitions → Runs/Releases → Tasks
@@ -242,6 +265,7 @@ Press `2` to switch to the CI/CD view:
 ### References Tab
 
 When viewing the References tab:
+
 - Use `j/k` to navigate between linked items
 - Press `o` to open the selected reference (PR, commit, attachment)
 - Groups: Children, Attachments, Pull Requests, Commits
