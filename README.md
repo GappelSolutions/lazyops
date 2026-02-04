@@ -1,16 +1,27 @@
 # lazyops
 
-A lazygit-style TUI for Azure DevOps work items. Browse sprints, manage tasks, and track references - all from your terminal.
+A lazygit-style TUI for Azure DevOps. Browse sprints, manage work items, monitor CI/CD pipelines, and trigger releases - all from your terminal.
 
 ![lazyops screenshot](docs/screenshot.png)
 
 ## Features
 
+### Work Items (Press `1`)
 - **Sprint View** - Browse work items by sprint with hierarchical parent/child display
 - **Work Item Details** - View descriptions, state, assignee, tags, estimates
 - **References** - See linked PRs, commits, attachments, and child items
 - **Quick Actions** - Change state, assignee, pin items, open in browser
 - **Filtering** - Search by text, filter by state or assignee
+
+### CI/CD (Press `2`)
+- **Pipelines** - Browse pipeline definitions, runs, tasks, and logs
+- **Releases** - Browse release definitions, deployments, stages, and tasks
+- **Actions** - Trigger pipelines, create releases, approve/reject deployments
+- **Cancel/Retrigger** - Stop running builds or redeploy failed stages
+- **Live Preview** - Auto-refreshing build progress with task timeline
+- **Pinning** - Pin frequently used pipelines and releases
+
+### General
 - **Caching** - Fast startup with intelligent caching
 - **Customizable** - Themes, keybindings, and settings via config file
 
@@ -114,6 +125,13 @@ Config file locations (checked in order):
 
 ## Keybindings
 
+### Views
+
+| Key | Action |
+|-----|--------|
+| `1` | Switch to Tasks view |
+| `2` | Switch to CI/CD view |
+
 ### Navigation
 
 | Key | Action |
@@ -123,7 +141,8 @@ Config file locations (checked in order):
 | `g` / `G` | Go to top / bottom |
 | `Ctrl+d` / `Ctrl+u` | Page down / up |
 | `Tab` | Switch preview tabs (Details / References) |
-| `Enter` | Expand / collapse item |
+| `Enter` | Expand / collapse item (or drill down in CI/CD) |
+| `Esc` | Go back / exit drill-down |
 | `t` | Toggle expand all |
 
 ### Filters
@@ -145,6 +164,20 @@ Config file locations (checked in order):
 | `p` | Pin / unpin item |
 | `y` | Copy ticket ID |
 
+### CI/CD Actions
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Drill into runs/stages/tasks |
+| `Esc` | Go back up |
+| `n` | Trigger new pipeline run / Create release |
+| `x` | Cancel running build / Abandon release |
+| `r` | Retrigger / Redeploy |
+| `e` | View logs in terminal (nvim) |
+| `a` | Approve pending deployment |
+| `d` | Reject pending deployment |
+| `L` | Load all runs (not just recent 10) |
+
 ### Selection
 
 | Key | Action |
@@ -156,6 +189,17 @@ Config file locations (checked in order):
 | `q` | Quit |
 
 ## Usage Tips
+
+### CI/CD View
+
+Press `2` to switch to the CI/CD view:
+- **Left panel**: Pipelines (top) and Releases (bottom)
+- **Right panel**: Preview with build timeline, logs, or stage details
+- Press `Enter` to drill down: Definitions → Runs/Releases → Tasks
+- Press `Esc` to go back up
+- Press `e` on a task to view full logs in nvim
+- Press `n` to trigger a new run or create a release
+- Press `x` to cancel, `r` to retrigger
 
 ### References Tab
 
@@ -191,6 +235,7 @@ src/
 ├── config.rs        # Configuration loading
 ├── events.rs        # Keyboard event handling
 ├── cache.rs         # Local data caching
+├── terminal.rs      # Embedded PTY terminal for log viewing
 ├── azure/
 │   ├── client.rs    # Azure DevOps CLI wrapper
 │   └── types.rs     # API response types
@@ -200,7 +245,13 @@ src/
     ├── preview.rs   # Details/References panels
     ├── sprint_bar.rs # Sprint/Project selectors
     ├── input.rs     # Dropdowns and inputs
-    └── help.rs      # Help popup
+    ├── help.rs      # Help popup
+    └── cicd/
+        ├── mod.rs       # CI/CD view composition
+        ├── pipelines.rs # Pipelines panel
+        ├── releases.rs  # Releases panel
+        ├── preview.rs   # Build timeline/logs preview
+        └── dialogs.rs   # Trigger/approval dialogs
 ```
 
 ## License
