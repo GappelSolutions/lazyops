@@ -276,11 +276,13 @@ src/
 │   └── types.rs     # API response types
 └── ui/
     ├── mod.rs       # Main UI composition
-    ├── work_items.rs # Work items list
-    ├── preview.rs   # Details/References panels
-    ├── sprint_bar.rs # Sprint/Project selectors
     ├── input.rs     # Dropdowns and inputs
     ├── help.rs      # Help popup
+    ├── tasks/
+    │   ├── mod.rs       # Tasks view composition
+    │   ├── work_items.rs # Work items list
+    │   ├── preview.rs   # Details/References panels
+    │   └── sprint_bar.rs # Sprint/Project selectors
     └── cicd/
         ├── mod.rs       # CI/CD view composition
         ├── pipelines.rs # Pipelines panel

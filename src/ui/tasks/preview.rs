@@ -57,7 +57,7 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect, focused: bool) {
 }
 
 fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
-    let block = super::styled_block("", focused, &app.config.theme);
+    let block = crate::ui::styled_block("", focused, &app.config.theme);
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -233,7 +233,7 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
 }
 
 fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
-    let block = super::styled_block("", focused, &app.config.theme);
+    let block = crate::ui::styled_block("", focused, &app.config.theme);
     let inner = block.inner(area);
     f.render_widget(block, area);
 

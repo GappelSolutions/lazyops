@@ -4,7 +4,7 @@ use ratatui::widgets::{List, ListItem};
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::WorkItems;
-    let block = super::styled_block("Work Items", focused, &app.config.theme);
+    let block = crate::ui::styled_block("Work Items", focused, &app.config.theme);
 
     if app.visible_items.is_empty() {
         let empty = ratatui::widgets::Paragraph::new("No work items in this sprint")

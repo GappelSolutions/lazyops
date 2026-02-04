@@ -1,9 +1,7 @@
 mod cicd;
 mod help;
 mod input;
-mod preview;
-mod sprint_bar;
-mod work_items;
+mod tasks;
 
 use crate::app::{App, InputMode, View};
 use ratatui::{
@@ -31,7 +29,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .split(size);
 
     // Header bar with view tabs, sprint and project selectors
-    sprint_bar::draw(f, app, chunks[0]);
+    tasks::draw_sprint_bar(f, app, chunks[0]);
 
     // Main content: route based on current view
     match app.current_view {
@@ -74,10 +72,10 @@ fn draw_tasks_view(f: &mut Frame, app: &mut App, area: Rect) {
         .split(area);
 
     // Left: Work items list
-    work_items::draw(f, app, content[0]);
+    tasks::draw_work_items(f, app, content[0]);
 
     // Right: Preview pane
-    preview::draw(f, app, content[1]);
+    tasks::draw_preview(f, app, content[1]);
 }
 
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
