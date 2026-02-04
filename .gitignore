@@ -2,3 +2,5 @@ target/
 .omc/
 *.swp
 .DS_Store
+.direnv/
+.envrc
