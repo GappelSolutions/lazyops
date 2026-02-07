@@ -31,13 +31,50 @@ ACTIONS
 
 VIEWS
   1             Tasks view
-  2             CI/CD view
+  2             PRs view
+  3             CI/CD view
   I             Select sprint
   P             Select project
   r             Refresh data
   ?             Toggle help
   q             Quit
-"#
+"#,
+        ),
+        View::PRs => (
+            " PRs Help - Press ? or Esc to close ",
+            r#"
+NAVIGATION
+  j/k ↑/↓       Move up/down
+  h/l           Switch pane (Active/Mine/Completed)
+  Enter         Drill into PRs / view details
+  Esc           Go back / Exit drill-down
+  Tab           Switch preview tabs
+
+REPOSITORIES
+  Enter         View PRs for repository
+  f             Search repositories
+
+PULL REQUESTS
+  h/l           Switch pane (Active/Mine/Completed)
+  Enter         View PR details
+  f             Search PRs
+  o             Open in browser
+
+PREVIEW TABS
+  Tab           Next tab (Details/Policies/Threads)
+  Shift+Tab     Previous tab
+  h             Back to list
+  j/k           Scroll content
+
+VIEWS
+  1             Tasks view
+  2             PRs view
+  3             CI/CD view
+  P             Select project
+  r             Refresh data
+  ?             Toggle help
+  q             Quit
+"#,
         ),
         View::CICD => (
             " CI/CD Help - Press ? or Esc to close ",
@@ -72,18 +109,17 @@ ACTIONS
 
 VIEWS
   1             Tasks view
-  2             CI/CD view
+  2             PRs view
+  3             CI/CD view
   P             Select project
   r             Refresh data
   ?             Toggle help
   q             Quit
-"#
+"#,
         ),
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(title);
+    let block = Block::default().borders(Borders::ALL).title(title);
 
     let inner = super::centered_rect(50, 30, area);
     f.render_widget(Clear, inner);

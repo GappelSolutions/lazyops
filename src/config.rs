@@ -95,12 +95,12 @@ pub struct Theme {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            refresh_interval: 300,  // 5 minutes
+            refresh_interval: 300, // 5 minutes
             page_jump: 10,
             api_timeout: 30,
             api_delay_ms: 50,
-            cache_expiry: 3600,     // 1 hour
-            states: vec![],         // Use defaults
+            cache_expiry: 3600, // 1 hour
+            states: vec![],     // Use defaults
         }
     }
 }
@@ -117,7 +117,7 @@ impl Default for Keybindings {
             bottom: 'G',
             // Actions
             open: 'o',
-            expand: '\n',  // Enter (handled separately)
+            expand: '\n', // Enter (handled separately)
             toggle_all: 't',
             pin: 'p',
             copy_id: 'y',
@@ -144,7 +144,16 @@ impl Settings {
     #[allow(dead_code)] // Public API for custom states configuration
     pub fn get_states(&self) -> Vec<&str> {
         if self.states.is_empty() {
-            vec!["All", "New", "In Progress", "Done In Stage", "Done Not Released", "Done", "Tested w/Bugs", "Removed"]
+            vec![
+                "All",
+                "New",
+                "In Progress",
+                "Done In Stage",
+                "Done Not Released",
+                "Done",
+                "Tested w/Bugs",
+                "Removed",
+            ]
         } else {
             self.states.iter().map(|s| s.as_str()).collect()
         }
@@ -155,21 +164,21 @@ impl Default for Theme {
     fn default() -> Self {
         Self {
             // One Dark color scheme
-            border: "#5c6370".to_string(),           // Gray
-            border_active: "#61afef".to_string(),    // Blue
-            selected_bg: "#2c323c".to_string(),      // Dark gray
-            text: "#abb2bf".to_string(),             // Light gray
-            text_muted: "#5c6370".to_string(),       // Muted gray
-            highlight: "#61afef".to_string(),        // Blue
-            state_new: "#61afef".to_string(),        // Blue
-            state_active: "#e5c07b".to_string(),     // Yellow
-            state_resolved: "#98c379".to_string(),   // Green
-            state_closed: "#5c6370".to_string(),     // Gray
-            type_bug: "#e06c75".to_string(),         // Red
-            type_story: "#c678dd".to_string(),       // Purple
-            type_task: "#61afef".to_string(),        // Blue
-            type_feature: "#56b6c2".to_string(),     // Cyan
-            type_epic: "#d19a66".to_string(),        // Orange
+            border: "#5c6370".to_string(),         // Gray
+            border_active: "#61afef".to_string(),  // Blue
+            selected_bg: "#2c323c".to_string(),    // Dark gray
+            text: "#abb2bf".to_string(),           // Light gray
+            text_muted: "#5c6370".to_string(),     // Muted gray
+            highlight: "#61afef".to_string(),      // Blue
+            state_new: "#61afef".to_string(),      // Blue
+            state_active: "#e5c07b".to_string(),   // Yellow
+            state_resolved: "#98c379".to_string(), // Green
+            state_closed: "#5c6370".to_string(),   // Gray
+            type_bug: "#e06c75".to_string(),       // Red
+            type_story: "#c678dd".to_string(),     // Purple
+            type_task: "#61afef".to_string(),      // Blue
+            type_feature: "#56b6c2".to_string(),   // Cyan
+            type_epic: "#d19a66".to_string(),      // Orange
         }
     }
 }
@@ -247,11 +256,16 @@ impl Theme {
     }
 
     /// Get foreground and background colors for work item type badge
-    pub fn type_badge_colors(&self, work_item_type: &str) -> (ratatui::style::Color, ratatui::style::Color) {
+    pub fn type_badge_colors(
+        &self,
+        work_item_type: &str,
+    ) -> (ratatui::style::Color, ratatui::style::Color) {
         use ratatui::style::Color;
         match work_item_type {
             "Bug" => (Color::Rgb(255, 180, 180), Color::Rgb(80, 30, 30)),
-            "User Story" | "Product Backlog Item" => (Color::Rgb(180, 210, 255), Color::Rgb(30, 45, 70)),
+            "User Story" | "Product Backlog Item" => {
+                (Color::Rgb(180, 210, 255), Color::Rgb(30, 45, 70))
+            }
             "Task" => (Color::Rgb(255, 230, 150), Color::Rgb(60, 50, 20)),
             "Feature" => (Color::Rgb(180, 240, 240), Color::Rgb(25, 55, 55)),
             "Epic" => (Color::Rgb(230, 180, 255), Color::Rgb(55, 30, 65)),
@@ -401,16 +415,19 @@ mod tests {
     fn test_get_states_empty_returns_defaults() {
         let settings = Settings::default();
         let states = settings.get_states();
-        assert_eq!(states, vec![
-            "All",
-            "New",
-            "In Progress",
-            "Done In Stage",
-            "Done Not Released",
-            "Done",
-            "Tested w/Bugs",
-            "Removed"
-        ]);
+        assert_eq!(
+            states,
+            vec![
+                "All",
+                "New",
+                "In Progress",
+                "Done In Stage",
+                "Done Not Released",
+                "Done",
+                "Tested w/Bugs",
+                "Removed"
+            ]
+        );
     }
 
     #[test]

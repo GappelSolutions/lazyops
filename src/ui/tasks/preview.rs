@@ -1,6 +1,9 @@
 use crate::app::{App, Focus, PreviewTab};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Tabs, Wrap, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, Borders, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+    Tabs, Wrap,
+};
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.focus == Focus::Preview;
@@ -9,8 +12,8 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Tab bar
-            Constraint::Min(0),     // Content
+            Constraint::Length(3), // Tab bar
+            Constraint::Min(0),    // Content
         ])
         .split(area);
 
@@ -39,19 +42,19 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect, focused: bool) {
         .highlight_style(
             Style::default()
                 .fg(app.config.theme.parse_color(&app.config.theme.highlight))
-                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::BOLD),
         )
         .divider("|");
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(
-            if focused {
-                app.config.theme.parse_color(&app.config.theme.border_active)
-            } else {
-                app.config.theme.parse_color(&app.config.theme.border)
-            }
-        ));
+        .border_style(Style::default().fg(if focused {
+            app.config
+                .theme
+                .parse_color(&app.config.theme.border_active)
+        } else {
+            app.config.theme.parse_color(&app.config.theme.border)
+        }));
 
     f.render_widget(tabs.block(block), area);
 }
@@ -84,18 +87,30 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
 
     // Header: Type icon + ID badge + Type name
     lines.push(Line::from(vec![
-        Span::styled(format!("{} ", item.type_icon()), Style::default().fg(type_color)),
+        Span::styled(
+            format!("{} ", item.type_icon()),
+            Style::default().fg(type_color),
+        ),
         Span::styled("\u{e0b6}", Style::default().fg(id_bg)),
-        Span::styled(format!(" #{} ", item.id), Style::default().fg(id_fg).bg(id_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!(" #{} ", item.id),
+            Style::default()
+                .fg(id_fg)
+                .bg(id_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("\u{e0b4} ", Style::default().fg(id_bg)),
         Span::styled(&item.fields.work_item_type, Style::default().fg(type_color)),
     ]));
     lines.push(Line::from(""));
 
     // Title (bold, full width)
-    lines.push(Line::from(vec![
-        Span::styled(&item.fields.title, Style::default().add_modifier(Modifier::BOLD).fg(Color::White)),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        &item.fields.title,
+        Style::default()
+            .add_modifier(Modifier::BOLD)
+            .fg(Color::White),
+    )]));
     lines.push(Line::from(""));
 
     // Metadata section with styled badges
@@ -110,12 +125,18 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
         Span::styled(" State", Style::default().fg(label_fg).bg(label_bg)),
         Span::styled("\u{e0b4} ", Style::default().fg(label_bg)),
         Span::styled("\u{e0b6}", Style::default().fg(state_bg)),
-        Span::styled(format!(" {} ", &item.fields.state), Style::default().fg(state_color).bg(state_bg)),
+        Span::styled(
+            format!(" {} ", &item.fields.state),
+            Style::default().fg(state_color).bg(state_bg),
+        ),
         Span::styled("\u{e0b4}", Style::default().fg(state_bg)),
     ]));
 
     // Assigned to
-    let assigned = item.fields.assigned_to.as_ref()
+    let assigned = item
+        .fields
+        .assigned_to
+        .as_ref()
         .map(|a| a.display_name.clone())
         .unwrap_or_else(|| "Unassigned".into());
     let (assignee_fg, assignee_bg) = if item.fields.assigned_to.is_some() {
@@ -128,7 +149,10 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
         Span::styled(" Assignee", Style::default().fg(label_fg).bg(label_bg)),
         Span::styled("\u{e0b4} ", Style::default().fg(label_bg)),
         Span::styled("\u{e0b6}", Style::default().fg(assignee_bg)),
-        Span::styled(format!(" {assigned} "), Style::default().fg(assignee_fg).bg(assignee_bg)),
+        Span::styled(
+            format!(" {assigned} "),
+            Style::default().fg(assignee_fg).bg(assignee_bg),
+        ),
         Span::styled("\u{e0b4}", Style::default().fg(assignee_bg)),
     ]));
 
@@ -140,7 +164,10 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
             Span::styled(" Sprint", Style::default().fg(label_fg).bg(label_bg)),
             Span::styled("\u{e0b4} ", Style::default().fg(label_bg)),
             Span::styled("\u{e0b6}", Style::default().fg(sprint_bg)),
-            Span::styled(format!(" {sprint} "), Style::default().fg(Color::Rgb(180, 200, 255)).bg(sprint_bg)),
+            Span::styled(
+                format!(" {sprint} "),
+                Style::default().fg(Color::Rgb(180, 200, 255)).bg(sprint_bg),
+            ),
             Span::styled("\u{e0b4}", Style::default().fg(sprint_bg)),
         ]));
     }
@@ -152,7 +179,12 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
             Span::styled(" Estimate", Style::default().fg(label_fg).bg(label_bg)),
             Span::styled("\u{e0b4} ", Style::default().fg(label_bg)),
             Span::styled("\u{e0b6}", Style::default().fg(estimate_bg)),
-            Span::styled(format!(" {hours:.0}h "), Style::default().fg(Color::Rgb(255, 200, 100)).bg(estimate_bg)),
+            Span::styled(
+                format!(" {hours:.0}h "),
+                Style::default()
+                    .fg(Color::Rgb(255, 200, 100))
+                    .bg(estimate_bg),
+            ),
             Span::styled("\u{e0b4}", Style::default().fg(estimate_bg)),
         ]));
     }
@@ -167,7 +199,10 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
         for tag in tags.split(';').map(|t| t.trim()) {
             if !tag.is_empty() {
                 tag_spans.push(Span::styled("\u{e0b6}", Style::default().fg(tag_bg)));
-                tag_spans.push(Span::styled(format!(" {tag} "), Style::default().fg(Color::Rgb(200, 180, 255)).bg(tag_bg)));
+                tag_spans.push(Span::styled(
+                    format!(" {tag} "),
+                    Style::default().fg(Color::Rgb(200, 180, 255)).bg(tag_bg),
+                ));
                 tag_spans.push(Span::styled("\u{e0b4}", Style::default().fg(tag_bg)));
                 tag_spans.push(Span::raw(" "));
             }
@@ -177,15 +212,22 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
 
     // Divider
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("─".repeat(inner.width.saturating_sub(2) as usize), Style::default().fg(Color::Rgb(60, 60, 60))),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        "─".repeat(inner.width.saturating_sub(2) as usize),
+        Style::default().fg(Color::Rgb(60, 60, 60)),
+    )]));
     lines.push(Line::from(""));
 
     // Description header
     let desc_bg = Color::Rgb(45, 45, 50);
     lines.push(Line::from(vec![
-        Span::styled(" Description", Style::default().fg(label_fg).bg(desc_bg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            " Description",
+            Style::default()
+                .fg(label_fg)
+                .bg(desc_bg)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled("\u{e0b4}", Style::default().fg(desc_bg)),
     ]));
     lines.push(Line::from(""));
@@ -198,13 +240,18 @@ fn draw_details(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
             if line.trim().is_empty() {
                 lines.push(Line::from(""));
             } else {
-                lines.push(Line::from(Span::styled(line.to_string(), Style::default().fg(Color::Rgb(180, 180, 180)))));
+                lines.push(Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default().fg(Color::Rgb(180, 180, 180)),
+                )));
             }
         }
     } else {
         lines.push(Line::from(Span::styled(
             "No description",
-            Style::default().fg(theme.parse_color(&theme.text_muted)).add_modifier(Modifier::ITALIC)
+            Style::default()
+                .fg(theme.parse_color(&theme.text_muted))
+                .add_modifier(Modifier::ITALIC),
         )));
     }
 
@@ -325,7 +372,10 @@ fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
             let count = group_counts.get(group).unwrap_or(&0);
             let header = Line::from(vec![
                 Span::styled(format!(" {icon} "), Style::default().fg(color)),
-                Span::styled(group, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    group,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(format!(" ({count})"), Style::default().fg(Color::DarkGray)),
             ]);
             items.push(ListItem::new(header));
@@ -336,12 +386,12 @@ fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
 
         // Get color based on icon type
         let color = match parsed.icon {
-            "⎇" => Color::Magenta,   // PR
-            "●" => Color::Green,     // Commit
-            "⌥" => Color::Yellow,    // Branch
-            "◇" => Color::Cyan,      // Child
+            "⎇" => Color::Magenta,             // PR
+            "●" => Color::Green,               // Commit
+            "⌥" => Color::Yellow,              // Branch
+            "◇" => Color::Cyan,                // Child
             "📎" => Color::Rgb(100, 160, 255), // Attachment
-            _ => Color::White,       // Other
+            _ => Color::White,                 // Other
         };
 
         let base_style = if is_selected {
@@ -350,7 +400,11 @@ fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
             Style::default()
         };
 
-        let text_color = if is_selected { Color::White } else { Color::Rgb(200, 200, 200) };
+        let text_color = if is_selected {
+            Color::White
+        } else {
+            Color::Rgb(200, 200, 200)
+        };
 
         let line = Line::from(vec![
             Span::styled("    ", base_style),
@@ -405,21 +459,19 @@ fn draw_references(f: &mut Frame, app: &mut App, area: Rect, focused: bool) {
     };
 
     // Auto-scroll to keep selected visible
-    let scroll = if visible_height > 0 && selected_visual_row >= app.refs_scroll as usize + visible_height {
-        (selected_visual_row - visible_height + 1) as u16
-    } else if (app.refs_scroll as usize) > selected_visual_row {
-        selected_visual_row as u16
-    } else {
-        app.refs_scroll
-    };
+    let scroll =
+        if visible_height > 0 && selected_visual_row >= app.refs_scroll as usize + visible_height {
+            (selected_visual_row - visible_height + 1) as u16
+        } else if (app.refs_scroll as usize) > selected_visual_row {
+            selected_visual_row as u16
+        } else {
+            app.refs_scroll
+        };
     app.refs_scroll = scroll.min(total_items.saturating_sub(visible_height) as u16);
 
     // Render only visible items
     let skip = app.refs_scroll as usize;
-    let visible_items: Vec<ListItem> = items.into_iter()
-        .skip(skip)
-        .take(visible_height)
-        .collect();
+    let visible_items: Vec<ListItem> = items.into_iter().skip(skip).take(visible_height).collect();
 
     let list = List::new(visible_items);
     f.render_widget(list, inner);

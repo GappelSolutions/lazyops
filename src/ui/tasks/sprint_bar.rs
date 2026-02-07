@@ -6,18 +6,19 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(35),  // View tabs
-            Constraint::Percentage(35),  // Sprint (Tasks) or empty (CI/CD)
-            Constraint::Percentage(30),  // Project
+            Constraint::Percentage(35), // View tabs
+            Constraint::Percentage(35), // Sprint (Tasks) or empty (CI/CD)
+            Constraint::Percentage(30), // Project
         ])
         .split(area);
 
     // View tabs
     draw_view_tabs(f, app, chunks[0]);
 
-    // Middle section: Sprint selector (Tasks view) or loading status (CI/CD view)
+    // Middle section: Sprint selector (Tasks view) or loading status (CI/CD, PRs view)
     match app.current_view {
         View::Tasks => draw_sprint_selector(f, app, chunks[1]),
+        View::PRs => draw_pr_status(f, app, chunks[1]),
         View::CICD => draw_loading_status(f, app, chunks[1]),
     }
 
@@ -26,10 +27,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_view_tabs(f: &mut Frame, app: &App, area: Rect) {
-    let titles = vec!["[1] Tasks", "[2] CI/CD"];
+    let titles = vec!["[1] Tasks", "[2] PRs", "[3] CI/CD"];
     let selected = match app.current_view {
         View::Tasks => 0,
-        View::CICD => 1,
+        View::PRs => 1,
+        View::CICD => 2,
     };
 
     let tabs = Tabs::new(titles)
@@ -38,31 +40,29 @@ fn draw_view_tabs(f: &mut Frame, app: &App, area: Rect) {
         .highlight_style(
             Style::default()
                 .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::BOLD),
         )
         .divider(" ");
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" View ");
+    let block = Block::default().borders(Borders::ALL).title(" View ");
 
     f.render_widget(tabs.block(block), area);
 }
 
 fn draw_sprint_selector(f: &mut Frame, app: &App, area: Rect) {
-    let sprint_name = app.selected_sprint()
+    let sprint_name = app
+        .selected_sprint()
         .map(|s| s.name.clone())
         .unwrap_or_else(|| "No sprint".into());
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Sprint [I] ");
+    let block = Block::default().borders(Borders::ALL).title(" Sprint [I] ");
     let text = Paragraph::new(sprint_name).block(block);
     f.render_widget(text, area);
 }
 
 fn draw_project_selector(f: &mut Frame, app: &App, area: Rect) {
-    let project_name = app.current_project()
+    let project_name = app
+        .current_project()
         .map(|p| p.name.clone())
         .unwrap_or_else(|| "No project".into());
 
@@ -73,13 +73,40 @@ fn draw_project_selector(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(text, area);
 }
 
+fn draw_pr_status(f: &mut Frame, app: &App, area: Rect) {
+    let show_loading = app.pr_loading;
+
+    let block = Block::default().borders(Borders::ALL).title(" Repo [R] ");
+
+    if show_loading {
+        let spinner_chars = ['◐', '◓', '◑', '◒'];
+        let frame = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            / 150) as usize;
+        let spinner = spinner_chars[frame % spinner_chars.len()];
+
+        let text = Paragraph::new(format!("{spinner} Loading..."))
+            .block(block)
+            .style(Style::default().fg(Color::Yellow));
+        f.render_widget(text, area);
+    } else if let Some(ref name) = app.current_repo_name {
+        let text = Paragraph::new(name.as_str()).block(block);
+        f.render_widget(text, area);
+    } else {
+        let text = Paragraph::new("Select repo")
+            .block(block)
+            .style(Style::default().fg(Color::DarkGray));
+        f.render_widget(text, area);
+    }
+}
+
 fn draw_loading_status(f: &mut Frame, app: &App, area: Rect) {
     // Only show loading for manual refreshes, not auto-refresh polling
     let show_loading = app.cicd_loading && !app.release_auto_refresh;
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Status ");
+    let block = Block::default().borders(Borders::ALL).title(" Status ");
 
     if show_loading {
         // Simple spinner using frame count
@@ -87,10 +114,11 @@ fn draw_loading_status(f: &mut Frame, app: &App, area: Rect) {
         let frame = (std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis() / 150) as usize;
+            .as_millis()
+            / 150) as usize;
         let spinner = spinner_chars[frame % spinner_chars.len()];
 
-        let text = Paragraph::new(format!("{} Loading...", spinner))
+        let text = Paragraph::new(format!("{spinner} Loading..."))
             .block(block)
             .style(Style::default().fg(Color::Yellow));
         f.render_widget(text, area);

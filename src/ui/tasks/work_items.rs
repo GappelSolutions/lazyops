@@ -18,9 +18,18 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let inner_width = area.width.saturating_sub(4) as usize; // 2 for borders, 2 for highlight symbol
 
     let selected_idx = app.work_item_list_state.selected();
-    let items: Vec<ListItem> = app.visible_items.iter()
+    let items: Vec<ListItem> = app
+        .visible_items
+        .iter()
         .enumerate()
-        .map(|(idx, vi)| render_work_item(vi, &app.config.theme, selected_idx == Some(idx), inner_width))
+        .map(|(idx, vi)| {
+            render_work_item(
+                vi,
+                &app.config.theme,
+                selected_idx == Some(idx),
+                inner_width,
+            )
+        })
         .collect();
 
     let list = List::new(items)
@@ -49,7 +58,12 @@ fn get_initials(name: &str) -> String {
         .to_uppercase()
 }
 
-fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selected: bool, available_width: usize) -> ListItem<'static> {
+fn render_work_item(
+    vi: &VisibleWorkItem,
+    theme: &crate::config::Theme,
+    is_selected: bool,
+    available_width: usize,
+) -> ListItem<'static> {
     let item = &vi.item;
 
     // Indentation based on depth
@@ -57,7 +71,11 @@ fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selec
 
     // Expand/collapse indicator
     let expand_indicator = if vi.has_children {
-        if vi.is_expanded { "▼ " } else { "▶ " }
+        if vi.is_expanded {
+            "▼ "
+        } else {
+            "▶ "
+        }
     } else {
         "  "
     };
@@ -74,12 +92,17 @@ fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selec
     let state_color = theme.state_color(&item.fields.state);
 
     // Get assignee initials
-    let initials = item.fields.assigned_to.as_ref()
+    let initials = item
+        .fields
+        .assigned_to
+        .as_ref()
         .map(|a| get_initials(&a.display_name))
         .unwrap_or_else(|| "--".to_string());
 
     // Hours display (remaining work)
-    let hours = item.fields.remaining_work
+    let hours = item
+        .fields
+        .remaining_work
         .map(|h| format!("{h:.0}h"))
         .unwrap_or_default();
 
@@ -106,7 +129,7 @@ fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selec
         Span::styled("\u{e0b6}", Style::default().fg(id_bg)),
         Span::styled(
             format!("#{}", item.id),
-            Style::default().fg(id_fg).bg(id_bg)
+            Style::default().fg(id_fg).bg(id_bg),
         ),
         Span::styled("\u{e0b4} ", Style::default().fg(id_bg)),
     ];
@@ -114,12 +137,28 @@ fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selec
     // Initials badge - use spaces on selected row to avoid powerline artifacts
     if is_selected {
         spans.push(Span::styled(" ", Style::default()));
-        spans.push(Span::styled(initials.to_string(), Style::default().fg(Color::Rgb(240, 250, 255)).bg(Color::Rgb(60, 90, 100))));
+        spans.push(Span::styled(
+            initials.to_string(),
+            Style::default()
+                .fg(Color::Rgb(240, 250, 255))
+                .bg(Color::Rgb(60, 90, 100)),
+        ));
         spans.push(Span::styled(" ", Style::default()));
     } else {
-        spans.push(Span::styled("\u{e0b6}", Style::default().fg(Color::Rgb(45, 70, 80))));
-        spans.push(Span::styled(initials.to_string(), Style::default().fg(Color::Rgb(200, 220, 230)).bg(Color::Rgb(45, 70, 80))));
-        spans.push(Span::styled("\u{e0b4}", Style::default().fg(Color::Rgb(45, 70, 80))));
+        spans.push(Span::styled(
+            "\u{e0b6}",
+            Style::default().fg(Color::Rgb(45, 70, 80)),
+        ));
+        spans.push(Span::styled(
+            initials.to_string(),
+            Style::default()
+                .fg(Color::Rgb(200, 220, 230))
+                .bg(Color::Rgb(45, 70, 80)),
+        ));
+        spans.push(Span::styled(
+            "\u{e0b4}",
+            Style::default().fg(Color::Rgb(45, 70, 80)),
+        ));
     }
 
     spans.push(Span::raw(" "));
@@ -128,7 +167,10 @@ fn render_work_item(vi: &VisibleWorkItem, theme: &crate::config::Theme, is_selec
     // Add hours if present
     if !hours.is_empty() {
         spans.push(Span::raw(" "));
-        spans.push(Span::styled(hours, Style::default().fg(Color::Rgb(150, 150, 150))));
+        spans.push(Span::styled(
+            hours,
+            Style::default().fg(Color::Rgb(150, 150, 150)),
+        ));
     }
 
     // Subtle yellow background for pinned items (will be overwritten by selection highlight)

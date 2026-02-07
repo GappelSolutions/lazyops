@@ -1,7 +1,7 @@
-mod pipelines;
-mod releases;
-mod preview;
 pub mod dialogs;
+mod pipelines;
+mod preview;
+mod releases;
 
 use crate::app::App;
 use ratatui::prelude::*;
@@ -10,19 +10,13 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     // Horizontal split: left (50%) + right (50%)
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
     // Left side: vertical split for Pipelines (50%) + Releases (50%)
     let left_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(chunks[0]);
 
     // Draw panes

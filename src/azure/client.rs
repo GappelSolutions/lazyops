@@ -1,9 +1,9 @@
 use crate::azure::types::*;
 use crate::config::ProjectConfig;
 use anyhow::{bail, Context, Result};
-use tokio::process::Command;
 use std::collections::HashMap;
 use std::time::Duration;
+use tokio::process::Command;
 
 pub struct AzureCli {
     pub organization: String,
@@ -62,10 +62,8 @@ impl AzureCli {
 
     /// Get iterations (sprints) for the team
     pub async fn get_sprints(&self) -> Result<Vec<Sprint>> {
-        self.exec(&[
-            "boards", "iteration", "team", "list",
-            "--team", &self.team,
-        ]).await
+        self.exec(&["boards", "iteration", "team", "list", "--team", &self.team])
+            .await
     }
 
     /// Get work items for a sprint iteration path
@@ -110,19 +108,21 @@ impl AzureCli {
     #[allow(dead_code)]
     pub async fn get_work_item(&self, id: i32) -> Result<WorkItem> {
         self.exec_no_project(&[
-            "boards", "work-item", "show",
-            "--id", &id.to_string(),
-            "--expand", "relations",
-        ]).await
+            "boards",
+            "work-item",
+            "show",
+            "--id",
+            &id.to_string(),
+            "--expand",
+            "relations",
+        ])
+        .await
     }
 
     /// Query work items by WIQL - returns full work items directly
     async fn query_work_items(&self, wiql: &str) -> Result<Vec<WorkItem>> {
         // WIQL query returns work items with all requested fields directly
-        let items: Vec<WorkItem> = self.exec(&[
-            "boards", "query",
-            "--wiql", wiql,
-        ]).await?;
+        let items: Vec<WorkItem> = self.exec(&["boards", "query", "--wiql", wiql]).await?;
 
         Ok(items)
     }
@@ -138,10 +138,15 @@ impl AzureCli {
 
         // work-item update doesn't accept --project
         self.exec_no_project(&[
-            "boards", "work-item", "update",
-            "--id", &id.to_string(),
-            field_arg, value,
-        ]).await
+            "boards",
+            "work-item",
+            "update",
+            "--id",
+            &id.to_string(),
+            field_arg,
+            value,
+        ])
+        .await
     }
 
     /// Get team members (kept for API compatibility but users are extracted from work items)
@@ -153,9 +158,13 @@ impl AzureCli {
     /// Get current user email from az account
     pub async fn get_current_user() -> Result<String> {
         #[derive(serde::Deserialize)]
-        struct Account { user: AccountUser }
+        struct Account {
+            user: AccountUser,
+        }
         #[derive(serde::Deserialize)]
-        struct AccountUser { name: String }
+        struct AccountUser {
+            name: String,
+        }
 
         let timeout = Duration::from_secs(10);
         let future = Command::new("az")
@@ -174,7 +183,8 @@ impl AzureCli {
     /// Build parent-child hierarchy from flat list (preserves original order from WIQL)
     pub fn build_hierarchy(items: Vec<WorkItem>) -> Vec<WorkItem> {
         // Track original order from WIQL response (StackRank ordering)
-        let order_map: HashMap<i32, usize> = items.iter()
+        let order_map: HashMap<i32, usize> = items
+            .iter()
             .enumerate()
             .map(|(idx, item)| (item.id, idx))
             .collect();
@@ -203,7 +213,12 @@ impl AzureCli {
             children.sort_by_key(|id| order_map.get(id).copied().unwrap_or(usize::MAX));
         }
 
-        fn build_tree(id: i32, by_id: &mut HashMap<i32, WorkItem>, children_map: &HashMap<i32, Vec<i32>>, depth: usize) -> Option<WorkItem> {
+        fn build_tree(
+            id: i32,
+            by_id: &mut HashMap<i32, WorkItem>,
+            children_map: &HashMap<i32, Vec<i32>>,
+            depth: usize,
+        ) -> Option<WorkItem> {
             let mut item = by_id.remove(&id)?;
             item.depth = depth;
             if let Some(child_ids) = children_map.get(&id) {
@@ -216,7 +231,10 @@ impl AzureCli {
             Some(item)
         }
 
-        root_ids.iter().filter_map(|&id| build_tree(id, &mut by_id, &children_map, 0)).collect()
+        root_ids
+            .iter()
+            .filter_map(|&id| build_tree(id, &mut by_id, &children_map, 0))
+            .collect()
     }
 
     /// List all pipeline definitions
@@ -300,7 +318,10 @@ impl AzureCli {
 
         let definitions: Vec<ReleaseDefinition> = serde_json::from_slice(&output.stdout)?;
         // Filter out deleted/disabled
-        Ok(definitions.into_iter().filter(|d| !d.is_deleted && !d.is_disabled).collect())
+        Ok(definitions
+            .into_iter()
+            .filter(|d| !d.is_deleted && !d.is_disabled)
+            .collect())
     }
 
     /// List releases (optionally filtered by definition)
@@ -355,7 +376,11 @@ impl AzureCli {
             .args(["devops", "invoke"])
             .args(["--area", "build"])
             .args(["--resource", "timeline"])
-            .args(["--route-parameters", &format!("project={}", self.project), &format!("buildId={build_id}")])
+            .args([
+                "--route-parameters",
+                &format!("project={}", self.project),
+                &format!("buildId={build_id}"),
+            ])
             .args(["--org", &self.organization])
             .args(["--output", "json"])
             .output()
@@ -372,6 +397,7 @@ impl AzureCli {
 
     /// Get build timeline with optional changeId for efficient delta updates
     /// Returns None if no changes since last changeId (very lightweight call)
+    #[allow(dead_code)]
     pub async fn get_build_timeline_delta(
         &self,
         build_id: i32,
@@ -381,28 +407,29 @@ impl AzureCli {
         cmd.args(["devops", "invoke"])
             .args(["--area", "build"])
             .args(["--resource", "timeline"])
-            .args(["--route-parameters",
-                   &format!("project={}", self.project),
-                   &format!("buildId={}", build_id)]);
+            .args([
+                "--route-parameters",
+                &format!("project={}", self.project),
+                &format!("buildId={build_id}"),
+            ]);
 
         // Add changeId for delta polling - returns empty if no changes
         if let Some(change_id) = last_change_id {
-            cmd.args(["--query-parameters", &format!("changeId={}", change_id)]);
+            cmd.args(["--query-parameters", &format!("changeId={change_id}")]);
         }
 
         cmd.args(["--org", &self.organization])
             .args(["--output", "json"]);
 
-        let output = cmd.output().await
-            .context("Failed to get timeline delta")?;
+        let output = cmd.output().await.context("Failed to get timeline delta")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to get timeline: {}", stderr);
+            bail!("Failed to get timeline: {stderr}");
         }
 
-        let response: TimelineResponse = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse timeline response")?;
+        let response: TimelineResponse =
+            serde_json::from_slice(&output.stdout).context("Failed to parse timeline response")?;
 
         // If no records returned and we had a changeId, nothing changed
         if response.records.is_empty() && last_change_id.is_some() {
@@ -419,7 +446,12 @@ impl AzureCli {
             .args(["devops", "invoke"])
             .args(["--area", "build"])
             .args(["--resource", "logs"])
-            .args(["--route-parameters", &format!("project={}", self.project), &format!("buildId={build_id}"), &format!("logId={log_id}")])
+            .args([
+                "--route-parameters",
+                &format!("project={}", self.project),
+                &format!("buildId={build_id}"),
+                &format!("logId={log_id}"),
+            ])
             .args(["--org", &self.organization])
             .args(["--output", "json"])
             .output()
@@ -442,7 +474,11 @@ impl AzureCli {
             .args(["--area", "release"])
             .args(["--resource", "approvals"])
             .args(["--route-parameters", &format!("project={}", self.project)])
-            .args(["--query-parameters", "statusFilter=pending", "includeMyGroupApprovals=true"])
+            .args([
+                "--query-parameters",
+                "statusFilter=pending",
+                "includeMyGroupApprovals=true",
+            ])
             .args(["--org", &self.organization])
             .args(["--output", "json"])
             .output()
@@ -451,17 +487,22 @@ impl AzureCli {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to get pending approvals: {}", stderr);
+            bail!("Failed to get pending approvals: {stderr}");
         }
 
-        let response: ApprovalsResponse = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse approvals response")?;
+        let response: ApprovalsResponse =
+            serde_json::from_slice(&output.stdout).context("Failed to parse approvals response")?;
         Ok(response.value)
     }
 
     /// Approve or reject a release approval
     #[allow(dead_code)]
-    pub async fn update_approval(&self, approval_id: i32, status: &str, comments: Option<&str>) -> Result<Approval> {
+    pub async fn update_approval(
+        &self,
+        approval_id: i32,
+        status: &str,
+        comments: Option<&str>,
+    ) -> Result<Approval> {
         // Azure DevOps Approvals API expects an array of approval objects with id included
         let body = serde_json::json!([{
             "id": approval_id,
@@ -471,7 +512,7 @@ impl AzureCli {
         let body_str = serde_json::to_string(&body)?;
 
         // Write body to temp file since az devops invoke needs --in-file
-        let temp_path = std::env::temp_dir().join(format!("approval_{}.json", approval_id));
+        let temp_path = std::env::temp_dir().join(format!("approval_{approval_id}.json"));
         tokio::fs::write(&temp_path, &body_str).await?;
 
         // Use bulk approvals endpoint (no approvalId in route) with array body
@@ -479,8 +520,7 @@ impl AzureCli {
             .args(["devops", "invoke"])
             .args(["--area", "release"])
             .args(["--resource", "approvals"])
-            .args(["--route-parameters",
-                   &format!("project={}", self.project)])
+            .args(["--route-parameters", &format!("project={}", self.project)])
             .args(["--http-method", "PATCH"])
             .args(["--api-version", "7.1"])
             .args(["--in-file", temp_path.to_str().unwrap()])
@@ -495,26 +535,33 @@ impl AzureCli {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to update approval: {}", stderr);
+            bail!("Failed to update approval: {stderr}");
         }
 
         // Response is an array, extract first element
-        let approvals: Vec<Approval> = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse approval response")?;
-        approvals.into_iter().next()
+        let approvals: Vec<Approval> =
+            serde_json::from_slice(&output.stdout).context("Failed to parse approval response")?;
+        approvals
+            .into_iter()
+            .next()
             .context("No approval returned in response")
     }
 
     /// Get release definition details (for trigger dialog)
     #[allow(dead_code)]
-    pub async fn get_release_definition_detail(&self, definition_id: i32) -> Result<ReleaseDefinitionDetail> {
+    pub async fn get_release_definition_detail(
+        &self,
+        definition_id: i32,
+    ) -> Result<ReleaseDefinitionDetail> {
         let output = Command::new("az")
             .args(["devops", "invoke"])
             .args(["--area", "release"])
             .args(["--resource", "definitions"])
-            .args(["--route-parameters",
-                   &format!("project={}", self.project),
-                   &format!("definitionId={}", definition_id)])
+            .args([
+                "--route-parameters",
+                &format!("project={}", self.project),
+                &format!("definitionId={definition_id}"),
+            ])
             .args(["--org", &self.organization])
             .args(["--output", "json"])
             .output()
@@ -523,7 +570,7 @@ impl AzureCli {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to get release definition: {}", stderr);
+            bail!("Failed to get release definition: {stderr}");
         }
 
         let detail: ReleaseDefinitionDetail = serde_json::from_slice(&output.stdout)
@@ -533,7 +580,11 @@ impl AzureCli {
 
     /// Create a new release
     #[allow(dead_code)]
-    pub async fn create_release(&self, definition_id: i32, description: Option<&str>) -> Result<Release> {
+    pub async fn create_release(
+        &self,
+        definition_id: i32,
+        description: Option<&str>,
+    ) -> Result<Release> {
         let mut cmd = Command::new("az");
         cmd.args(["pipelines", "release", "create"])
             .args(["--definition-id", &definition_id.to_string()])
@@ -545,16 +596,15 @@ impl AzureCli {
             cmd.args(["--description", desc]);
         }
 
-        let output = cmd.output().await
-            .context("Failed to create release")?;
+        let output = cmd.output().await.context("Failed to create release")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to create release: {}", stderr);
+            bail!("Failed to create release: {stderr}");
         }
 
-        let release: Release = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse created release")?;
+        let release: Release =
+            serde_json::from_slice(&output.stdout).context("Failed to parse created release")?;
         Ok(release)
     }
 
@@ -574,7 +624,7 @@ impl AzureCli {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to cancel pipeline run: {}", stderr);
+            bail!("Failed to cancel pipeline run: {stderr}");
         }
 
         Ok(())
@@ -582,7 +632,11 @@ impl AzureCli {
 
     /// Retrigger a pipeline on the same branch (creates new run)
     #[allow(dead_code)]
-    pub async fn retrigger_pipeline_run(&self, pipeline_id: i32, branch: &str) -> Result<PipelineRun> {
+    pub async fn retrigger_pipeline_run(
+        &self,
+        pipeline_id: i32,
+        branch: &str,
+    ) -> Result<PipelineRun> {
         // Reuse the existing trigger_pipeline method
         self.trigger_pipeline(pipeline_id, branch).await
     }
@@ -596,16 +650,18 @@ impl AzureCli {
         let body_str = serde_json::to_string(&body)?;
 
         // Write body to temp file since az devops invoke needs --in-file
-        let temp_path = std::env::temp_dir().join(format!("release_cancel_{}.json", release_id));
+        let temp_path = std::env::temp_dir().join(format!("release_cancel_{release_id}.json"));
         tokio::fs::write(&temp_path, &body_str).await?;
 
         let output = Command::new("az")
             .args(["devops", "invoke"])
             .args(["--area", "release"])
             .args(["--resource", "releases"])
-            .args(["--route-parameters",
-                   &format!("project={}", self.project),
-                   &format!("releaseId={}", release_id)])
+            .args([
+                "--route-parameters",
+                &format!("project={}", self.project),
+                &format!("releaseId={release_id}"),
+            ])
             .args(["--http-method", "PATCH"])
             .args(["--in-file", temp_path.to_str().unwrap()])
             .args(["--org", &self.organization])
@@ -619,7 +675,7 @@ impl AzureCli {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to cancel release: {}", stderr);
+            bail!("Failed to cancel release: {stderr}");
         }
 
         Ok(())
@@ -627,7 +683,11 @@ impl AzureCli {
 
     /// Cancel a specific release environment/stage
     #[allow(dead_code)]
-    pub async fn cancel_release_environment(&self, release_id: i32, environment_id: i32) -> Result<()> {
+    pub async fn cancel_release_environment(
+        &self,
+        release_id: i32,
+        environment_id: i32,
+    ) -> Result<()> {
         let body = serde_json::json!({
             "status": "canceled",
             "comment": "Canceled from lazyops"
@@ -635,17 +695,20 @@ impl AzureCli {
         let body_str = serde_json::to_string(&body)?;
 
         // Write body to temp file since az devops invoke needs --in-file
-        let temp_path = std::env::temp_dir().join(format!("env_cancel_{}_{}.json", release_id, environment_id));
+        let temp_path =
+            std::env::temp_dir().join(format!("env_cancel_{release_id}_{environment_id}.json"));
         tokio::fs::write(&temp_path, &body_str).await?;
 
         let output = Command::new("az")
             .args(["devops", "invoke"])
             .args(["--area", "release"])
             .args(["--resource", "releases/environments"])
-            .args(["--route-parameters",
-                   &format!("project={}", self.project),
-                   &format!("releaseId={}", release_id),
-                   &format!("environmentId={}", environment_id)])
+            .args([
+                "--route-parameters",
+                &format!("project={}", self.project),
+                &format!("releaseId={release_id}"),
+                &format!("environmentId={environment_id}"),
+            ])
             .args(["--http-method", "PATCH"])
             .args(["--in-file", temp_path.to_str().unwrap()])
             .args(["--org", &self.organization])
@@ -659,7 +722,7 @@ impl AzureCli {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to cancel release environment: {}", stderr);
+            bail!("Failed to cancel release environment: {stderr}");
         }
 
         Ok(())
@@ -667,7 +730,11 @@ impl AzureCli {
 
     /// Redeploy/retrigger a specific release environment/stage
     #[allow(dead_code)]
-    pub async fn redeploy_release_environment(&self, release_id: i32, environment_id: i32) -> Result<()> {
+    pub async fn redeploy_release_environment(
+        &self,
+        release_id: i32,
+        environment_id: i32,
+    ) -> Result<()> {
         let body = serde_json::json!({
             "status": "inProgress",
             "comment": "Redeployed from lazyops"
@@ -675,17 +742,20 @@ impl AzureCli {
         let body_str = serde_json::to_string(&body)?;
 
         // Write body to temp file since az devops invoke needs --in-file
-        let temp_path = std::env::temp_dir().join(format!("env_redeploy_{}_{}.json", release_id, environment_id));
+        let temp_path =
+            std::env::temp_dir().join(format!("env_redeploy_{release_id}_{environment_id}.json"));
         tokio::fs::write(&temp_path, &body_str).await?;
 
         let output = Command::new("az")
             .args(["devops", "invoke"])
             .args(["--area", "release"])
             .args(["--resource", "releases/environments"])
-            .args(["--route-parameters",
-                   &format!("project={}", self.project),
-                   &format!("releaseId={}", release_id),
-                   &format!("environmentId={}", environment_id)])
+            .args([
+                "--route-parameters",
+                &format!("project={}", self.project),
+                &format!("releaseId={release_id}"),
+                &format!("environmentId={environment_id}"),
+            ])
             .args(["--http-method", "PATCH"])
             .args(["--in-file", temp_path.to_str().unwrap()])
             .args(["--org", &self.organization])
@@ -699,10 +769,319 @@ impl AzureCli {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to redeploy release environment: {}", stderr);
+            bail!("Failed to redeploy release environment: {stderr}");
         }
 
         Ok(())
+    }
+
+    /// List all repositories
+    #[allow(dead_code)]
+    pub async fn list_repositories(&self) -> Result<Vec<Repository>> {
+        self.exec(&["repos", "list"]).await
+    }
+
+    /// List pull requests with optional filters
+    #[allow(dead_code)]
+    pub async fn list_pull_requests(
+        &self,
+        repository: Option<&str>,
+        status: &str,
+        creator: Option<&str>,
+        top: Option<i32>,
+    ) -> Result<Vec<PullRequest>> {
+        let timeout = Duration::from_secs(self.timeout_secs);
+        let mut cmd = Command::new("az");
+        cmd.args(["repos", "pr", "list"])
+            .args(["--status", status])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--output", "json"]);
+
+        if let Some(repo) = repository {
+            cmd.args(["--repository", repo]);
+        }
+
+        if let Some(user) = creator {
+            cmd.args(["--creator", user]);
+        }
+
+        if let Some(limit) = top {
+            cmd.args(["--top", &limit.to_string()]);
+        }
+
+        let future = cmd.output();
+        let output = tokio::time::timeout(timeout, future)
+            .await
+            .context("Azure CLI request timed out")?
+            .context("Failed to list pull requests")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to list pull requests: {stderr}");
+        }
+
+        let prs: Vec<PullRequest> = serde_json::from_slice(&output.stdout)?;
+        Ok(prs)
+    }
+
+    /// Get a single pull request by ID
+    #[allow(dead_code)]
+    pub async fn get_pull_request(&self, id: i32) -> Result<PullRequest> {
+        self.exec_no_project(&["repos", "pr", "show", "--id", &id.to_string()])
+            .await
+    }
+
+    /// List threads (comments) on a pull request
+    #[allow(dead_code)]
+    pub async fn list_pr_threads(&self, repository_id: &str, pr_id: i32) -> Result<Vec<PRThread>> {
+        let timeout = Duration::from_secs(self.timeout_secs);
+        let future = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "git"])
+            .args(["--resource", "pullRequestThreads"])
+            .args([
+                "--route-parameters",
+                &format!("project={}", self.project),
+                &format!("repositoryId={repository_id}"),
+                &format!("pullRequestId={pr_id}"),
+            ])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output();
+
+        let output = tokio::time::timeout(timeout, future)
+            .await
+            .context("Azure CLI request timed out")?
+            .context("Failed to list PR threads")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to list PR threads: {stderr}");
+        }
+
+        let response: PRThreadsResponse = serde_json::from_slice(&output.stdout)?;
+        Ok(response.value)
+    }
+
+    /// List policies evaluated on a pull request
+    #[allow(dead_code)]
+    pub async fn list_pr_policies(&self, pr_id: i32) -> Result<Vec<PRPolicy>> {
+        let timeout = Duration::from_secs(self.timeout_secs);
+        let future = Command::new("az")
+            .args(["repos", "pr", "policy", "list"])
+            .args(["--id", &pr_id.to_string()])
+            .args(["--org", &self.organization])
+            .args(["--detect", "false"])
+            .args(["--output", "json"])
+            .output();
+
+        let output = tokio::time::timeout(timeout, future)
+            .await
+            .context("Azure CLI request timed out")?
+            .context("Failed to list PR policies")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to list PR policies: {stderr}");
+        }
+
+        let policies: Vec<PRPolicy> = serde_json::from_slice(&output.stdout)?;
+        Ok(policies)
+    }
+
+    /// Set vote on a pull request
+    /// Votes: "approve", "approve-with-suggestions", "reject", "reset", "wait-for-author"
+    #[allow(dead_code)]
+    pub async fn set_pr_vote(&self, pr_id: i32, vote: &str) -> Result<()> {
+        let timeout = Duration::from_secs(self.timeout_secs);
+        let future = Command::new("az")
+            .args(["repos", "pr", "set-vote"])
+            .args(["--id", &pr_id.to_string()])
+            .args(["--vote", vote])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output();
+
+        let output = tokio::time::timeout(timeout, future)
+            .await
+            .context("Azure CLI request timed out")?
+            .context("Failed to set PR vote")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to set PR vote: {stderr}");
+        }
+
+        Ok(())
+    }
+
+    /// Update a pull request (status, title, description, draft)
+    #[allow(dead_code)]
+    pub async fn update_pr(
+        &self,
+        pr_id: i32,
+        status: Option<&str>,
+        title: Option<&str>,
+        description: Option<&str>,
+        draft: Option<bool>,
+    ) -> Result<PullRequest> {
+        let timeout = Duration::from_secs(self.timeout_secs);
+        let mut cmd = Command::new("az");
+        cmd.args(["repos", "pr", "update"])
+            .args(["--id", &pr_id.to_string()])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"]);
+
+        if let Some(s) = status {
+            cmd.args(["--status", s]);
+        }
+
+        if let Some(t) = title {
+            cmd.args(["--title", t]);
+        }
+
+        if let Some(d) = description {
+            cmd.args(["--description", d]);
+        }
+
+        if let Some(is_draft) = draft {
+            cmd.args(["--draft", if is_draft { "true" } else { "false" }]);
+        }
+
+        let future = cmd.output();
+        let output = tokio::time::timeout(timeout, future)
+            .await
+            .context("Azure CLI request timed out")?
+            .context("Failed to update PR")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to update PR: {stderr}");
+        }
+
+        let pr: PullRequest = serde_json::from_slice(&output.stdout)?;
+        Ok(pr)
+    }
+
+    /// Create a new pull request
+    #[allow(dead_code)]
+    pub async fn create_pr(
+        &self,
+        repository: &str,
+        source_branch: &str,
+        target_branch: &str,
+        title: &str,
+        description: Option<&str>,
+        draft: bool,
+    ) -> Result<PullRequest> {
+        let timeout = Duration::from_secs(self.timeout_secs);
+        let mut cmd = Command::new("az");
+        cmd.args(["repos", "pr", "create"])
+            .args(["--repository", repository])
+            .args(["--source-branch", source_branch])
+            .args(["--target-branch", target_branch])
+            .args(["--title", title])
+            .args(["--draft", if draft { "true" } else { "false" }])
+            .args(["--org", &self.organization])
+            .args(["--project", &self.project])
+            .args(["--output", "json"]);
+
+        if let Some(desc) = description {
+            cmd.args(["--description", desc]);
+        }
+
+        let future = cmd.output();
+        let output = tokio::time::timeout(timeout, future)
+            .await
+            .context("Azure CLI request timed out")?
+            .context("Failed to create PR")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to create PR: {stderr}");
+        }
+
+        let pr: PullRequest = serde_json::from_slice(&output.stdout)?;
+        Ok(pr)
+    }
+
+    /// Add a comment to a pull request (creates a new thread)
+    #[allow(dead_code)]
+    pub async fn add_pr_comment(
+        &self,
+        repository_id: &str,
+        pr_id: i32,
+        content: &str,
+    ) -> Result<()> {
+        let body = serde_json::json!({
+            "comments": [{
+                "content": content,
+                "parentCommentId": 0,
+                "commentType": 1
+            }],
+            "status": 1
+        });
+        let body_str = serde_json::to_string(&body)?;
+
+        // Write body to temp file since az devops invoke needs --in-file
+        let temp_path =
+            std::env::temp_dir().join(format!("pr_comment_{}_{}.json", pr_id, std::process::id()));
+        tokio::fs::write(&temp_path, &body_str).await?;
+
+        let output = Command::new("az")
+            .args(["devops", "invoke"])
+            .args(["--area", "git"])
+            .args(["--resource", "pullRequestThreads"])
+            .args([
+                "--route-parameters",
+                &format!("project={}", self.project),
+                &format!("repositoryId={repository_id}"),
+                &format!("pullRequestId={pr_id}"),
+            ])
+            .args(["--http-method", "POST"])
+            .args(["--in-file", temp_path.to_str().unwrap()])
+            .args(["--api-version", "7.1"])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output()
+            .await
+            .context("Failed to add PR comment")?;
+
+        // Clean up temp file
+        let _ = tokio::fs::remove_file(&temp_path).await;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to add PR comment: {stderr}");
+        }
+
+        Ok(())
+    }
+
+    /// List work items linked to a pull request
+    #[allow(dead_code)]
+    pub async fn list_pr_work_items(&self, pr_id: i32) -> Result<serde_json::Value> {
+        let timeout = Duration::from_secs(self.timeout_secs);
+        let future = Command::new("az")
+            .args(["repos", "pr", "work-item", "list"])
+            .args(["--id", &pr_id.to_string()])
+            .args(["--org", &self.organization])
+            .args(["--output", "json"])
+            .output();
+
+        let output = tokio::time::timeout(timeout, future)
+            .await
+            .context("Azure CLI request timed out")?
+            .context("Failed to list PR work items")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!("Failed to list PR work items: {stderr}");
+        }
+
+        let work_items: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        Ok(work_items)
     }
 }
 
@@ -715,7 +1094,7 @@ mod tests {
             id,
             rev: 1,
             fields: WorkItemFields {
-                title: format!("Item {}", id),
+                title: format!("Item {id}"),
                 state: "New".to_string(),
                 work_item_type: "Task".to_string(),
                 assigned_to: None,
@@ -778,8 +1157,8 @@ mod tests {
     #[test]
     fn test_build_hierarchy_parent_child_relationship() {
         let items = vec![
-            make_work_item(1, None),      // Parent
-            make_work_item(2, Some(1)),   // Child
+            make_work_item(1, None),    // Parent
+            make_work_item(2, Some(1)), // Child
         ];
         let result = AzureCli::build_hierarchy(items);
 
@@ -797,9 +1176,9 @@ mod tests {
     #[test]
     fn test_build_hierarchy_multi_level() {
         let items = vec![
-            make_work_item(1, None),      // Grandparent
-            make_work_item(2, Some(1)),   // Parent
-            make_work_item(3, Some(2)),   // Child
+            make_work_item(1, None),    // Grandparent
+            make_work_item(2, Some(1)), // Parent
+            make_work_item(3, Some(2)), // Child
         ];
         let result = AzureCli::build_hierarchy(items);
 
@@ -829,7 +1208,7 @@ mod tests {
         // Child whose parent_id points to non-existent item should be root
         let items = vec![
             make_work_item(1, None),
-            make_work_item(2, Some(999)),  // Parent 999 doesn't exist
+            make_work_item(2, Some(999)), // Parent 999 doesn't exist
         ];
         let result = AzureCli::build_hierarchy(items);
 
@@ -837,7 +1216,7 @@ mod tests {
         assert_eq!(result[0].id, 1);
         assert_eq!(result[0].depth, 0);
         assert_eq!(result[1].id, 2);
-        assert_eq!(result[1].depth, 0);  // Orphan treated as root
+        assert_eq!(result[1].depth, 0); // Orphan treated as root
 
         // Both should have no children
         assert!(result[0].children.is_empty());
@@ -866,7 +1245,7 @@ mod tests {
         // Children should also maintain original order
         let items = vec![
             make_work_item(1, None),
-            make_work_item(5, Some(1)),   // Child added in order 5, 3, 4
+            make_work_item(5, Some(1)), // Child added in order 5, 3, 4
             make_work_item(3, Some(1)),
             make_work_item(4, Some(1)),
         ];
@@ -885,12 +1264,12 @@ mod tests {
     fn test_build_hierarchy_complex_tree() {
         // Multiple parents with multiple children
         let items = vec![
-            make_work_item(1, None),      // Root 1
-            make_work_item(2, Some(1)),   // Child of 1
-            make_work_item(3, Some(1)),   // Child of 1
-            make_work_item(4, None),      // Root 2
-            make_work_item(5, Some(4)),   // Child of 4
-            make_work_item(6, Some(2)),   // Grandchild of 1
+            make_work_item(1, None),    // Root 1
+            make_work_item(2, Some(1)), // Child of 1
+            make_work_item(3, Some(1)), // Child of 1
+            make_work_item(4, None),    // Root 2
+            make_work_item(5, Some(4)), // Child of 4
+            make_work_item(6, Some(2)), // Grandchild of 1
         ];
         let result = AzureCli::build_hierarchy(items);
 

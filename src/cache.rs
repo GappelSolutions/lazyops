@@ -1,4 +1,7 @@
-use crate::azure::{Sprint, WorkItem, User, Pipeline, ReleaseDefinition, PipelineRun, Release, TimelineRecord};
+use crate::azure::{
+    Pipeline, PipelineRun, PullRequest, Release, ReleaseDefinition, Repository, Sprint,
+    TimelineRecord, User, WorkItem,
+};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -60,13 +63,51 @@ fn cache_dir() -> Option<PathBuf> {
     dirs::cache_dir().map(|d| d.join("lazyops"))
 }
 
+pub fn save_last_project(name: &str) -> Result<()> {
+    let dir = cache_dir().ok_or_else(|| anyhow::anyhow!("No cache directory"))?;
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("last_project.txt");
+    std::fs::write(path, name)?;
+    Ok(())
+}
+
+pub fn load_last_project() -> Option<String> {
+    let path = cache_dir()?.join("last_project.txt");
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+pub fn save_last_repo(project: &str, repo_name: &str) -> Result<()> {
+    let dir = cache_dir().ok_or_else(|| anyhow::anyhow!("No cache directory"))?;
+    std::fs::create_dir_all(&dir)?;
+    let sanitized = sanitize_filename(project);
+    let path = dir.join(format!("{sanitized}_last_repo.txt"));
+    std::fs::write(path, repo_name)?;
+    Ok(())
+}
+
+pub fn load_last_repo(project: &str) -> Option<String> {
+    let sanitized = sanitize_filename(project);
+    let path = cache_dir()?.join(format!("{sanitized}_last_repo.txt"));
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
 fn cache_path(project: &str) -> Option<PathBuf> {
     cache_dir().map(|d| d.join(format!("{}.json", sanitize_filename(project))))
 }
 
 fn sanitize_filename(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -190,6 +231,7 @@ impl PipelineRunsCacheEntry {
     }
 
     /// Cache is always valid (we use stale-while-revalidate)
+    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         true
     }
@@ -206,7 +248,10 @@ fn pipeline_runs_cache_path(project: &str, pipeline_id: i32) -> Option<PathBuf> 
 }
 
 /// Load pipeline runs cache. Returns (entry, needs_refresh) if cache exists.
-pub fn load_pipeline_runs(project: &str, pipeline_id: i32) -> Option<(PipelineRunsCacheEntry, bool)> {
+pub fn load_pipeline_runs(
+    project: &str,
+    pipeline_id: i32,
+) -> Option<(PipelineRunsCacheEntry, bool)> {
     let path = pipeline_runs_cache_path(project, pipeline_id)?;
     let contents = std::fs::read_to_string(&path).ok()?;
     let entry: PipelineRunsCacheEntry = serde_json::from_str(&contents).ok()?;
@@ -255,6 +300,7 @@ impl ReleasesCacheEntry {
     }
 
     /// Cache is always valid (we use stale-while-revalidate)
+    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         true
     }
@@ -320,6 +366,7 @@ impl TimelineCacheEntry {
     }
 
     /// Cache is always valid (we use stale-while-revalidate)
+    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         true
     }
@@ -387,6 +434,7 @@ impl BuildLogCacheEntry {
     }
 
     /// Cache is always valid (we use stale-while-revalidate)
+    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         true
     }
@@ -403,7 +451,11 @@ fn build_log_cache_path(project: &str, build_id: i32, log_id: i32) -> Option<Pat
 }
 
 /// Load build log cache. Returns (entry, needs_refresh) if cache exists.
-pub fn load_build_log(project: &str, build_id: i32, log_id: i32) -> Option<(BuildLogCacheEntry, bool)> {
+pub fn load_build_log(
+    project: &str,
+    build_id: i32,
+    log_id: i32,
+) -> Option<(BuildLogCacheEntry, bool)> {
     let path = build_log_cache_path(project, build_id, log_id)?;
     let contents = std::fs::read_to_string(&path).ok()?;
     let entry: BuildLogCacheEntry = serde_json::from_str(&contents).ok()?;
@@ -415,6 +467,147 @@ pub fn save_build_log(project: &str, entry: &BuildLogCacheEntry) -> Result<()> {
     let dir = cache_dir().ok_or_else(|| anyhow::anyhow!("No cache directory"))?;
     std::fs::create_dir_all(&dir)?;
     let path = build_log_cache_path(project, entry.build_id, entry.log_id)
+        .ok_or_else(|| anyhow::anyhow!("No cache path"))?;
+    let contents = serde_json::to_string_pretty(entry)?;
+    std::fs::write(path, contents)?;
+    Ok(())
+}
+
+// ============================================
+// PR Cache (repositories list)
+// ============================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PRCacheEntry {
+    pub timestamp: u64,
+    pub repos: Vec<Repository>,
+}
+
+impl PRCacheEntry {
+    pub fn new(repos: Vec<Repository>) -> Self {
+        Self {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            repos,
+        }
+    }
+
+    pub fn age_seconds(&self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs().saturating_sub(self.timestamp))
+            .unwrap_or(0)
+    }
+
+    /// Pipeline and release definition lists rarely change (once a year).
+    /// Users can manually refresh with 'r' when needed.
+    pub fn is_valid(&self) -> bool {
+        true
+    }
+}
+
+fn pr_cache_path(project: &str) -> Option<PathBuf> {
+    let sanitized = sanitize_filename(project);
+    cache_dir().map(|d| d.join(format!("{sanitized}_pr.json")))
+}
+
+pub fn load_pr(project: &str) -> Option<PRCacheEntry> {
+    let path = pr_cache_path(project)?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let entry: PRCacheEntry = serde_json::from_str(&contents).ok()?;
+    // Only return if cache is still valid
+    if entry.is_valid() {
+        Some(entry)
+    } else {
+        None
+    }
+}
+
+pub fn save_pr(project: &str, entry: &PRCacheEntry) -> Result<()> {
+    let dir = cache_dir().ok_or_else(|| anyhow::anyhow!("No cache directory"))?;
+    std::fs::create_dir_all(&dir)?;
+    let path = pr_cache_path(project).ok_or_else(|| anyhow::anyhow!("No cache path"))?;
+    let contents = serde_json::to_string_pretty(entry)?;
+    std::fs::write(path, contents)?;
+    Ok(())
+}
+
+// ============================================
+// PR List Cache (per repo, all panes)
+// ============================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PRListCacheEntry {
+    pub timestamp: u64,
+    pub repo_name: String,
+    pub active: Vec<PullRequest>,
+    pub mine: Vec<PullRequest>,
+    pub completed: Vec<PullRequest>,
+    pub abandoned: Vec<PullRequest>,
+}
+
+impl PRListCacheEntry {
+    pub fn new(
+        repo_name: &str,
+        active: Vec<PullRequest>,
+        mine: Vec<PullRequest>,
+        completed: Vec<PullRequest>,
+        abandoned: Vec<PullRequest>,
+    ) -> Self {
+        Self {
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            repo_name: repo_name.to_string(),
+            active,
+            mine,
+            completed,
+            abandoned,
+        }
+    }
+
+    pub fn age_seconds(&self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs().saturating_sub(self.timestamp))
+            .unwrap_or(0)
+    }
+
+    /// Cache is always valid (stale-while-revalidate)
+    pub fn is_valid(&self) -> bool {
+        true
+    }
+
+    /// Check if cache should be refreshed in background
+    pub fn needs_refresh(&self) -> bool {
+        self.age_seconds() >= CICD_CACHE_TTL_SECS
+    }
+}
+
+fn pr_list_cache_path(project: &str, repo_name: &str) -> Option<PathBuf> {
+    let sanitized_project = sanitize_filename(project);
+    let sanitized_repo = sanitize_filename(repo_name);
+    cache_dir().map(|d| d.join(format!("{sanitized_project}_pr_list_{sanitized_repo}.json")))
+}
+
+pub fn load_pr_list(project: &str, repo_name: &str) -> Option<PRListCacheEntry> {
+    let path = pr_list_cache_path(project, repo_name)?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let entry: PRListCacheEntry = serde_json::from_str(&contents).ok()?;
+    if entry.is_valid() {
+        Some(entry)
+    } else {
+        None
+    }
+}
+
+pub fn save_pr_list(project: &str, entry: &PRListCacheEntry) -> Result<()> {
+    let dir = cache_dir().ok_or_else(|| anyhow::anyhow!("No cache directory"))?;
+    std::fs::create_dir_all(&dir)?;
+    let path = pr_list_cache_path(project, &entry.repo_name)
         .ok_or_else(|| anyhow::anyhow!("No cache path"))?;
     let contents = serde_json::to_string_pretty(entry)?;
     std::fs::write(path, contents)?;
@@ -445,7 +638,10 @@ mod tests {
     #[test]
     fn test_sanitize_filename_path_traversal() {
         // "../../../etc/passwd" -> 9 dots/slashes = 9 underscores, then "etc_passwd"
-        assert_eq!(sanitize_filename("../../../etc/passwd"), "_________etc_passwd");
+        assert_eq!(
+            sanitize_filename("../../../etc/passwd"),
+            "_________etc_passwd"
+        );
         // "..\\..\\windows" -> 6 dots/backslashes = 6 underscores, then "windows"
         assert_eq!(sanitize_filename("..\\..\\windows"), "______windows");
     }
@@ -457,31 +653,18 @@ mod tests {
 
     #[test]
     fn test_cache_entry_age_seconds_new() {
-        let entry = CacheEntry::new(
-            vec![],
-            vec![],
-            vec![],
-            "test",
-            None,
-            None,
-            HashSet::new(),
-        );
+        let entry = CacheEntry::new(vec![], vec![], vec![], "test", None, None, HashSet::new());
 
         let age = entry.age_seconds();
-        assert!(age <= 1, "Newly created entry should have age close to 0, got {}", age);
+        assert!(
+            age <= 1,
+            "Newly created entry should have age close to 0, got {age}"
+        );
     }
 
     #[test]
     fn test_cache_entry_age_seconds_old() {
-        let mut entry = CacheEntry::new(
-            vec![],
-            vec![],
-            vec![],
-            "test",
-            None,
-            None,
-            HashSet::new(),
-        );
+        let mut entry = CacheEntry::new(vec![], vec![], vec![], "test", None, None, HashSet::new());
 
         // Set timestamp to 100 seconds ago
         let now = SystemTime::now()
@@ -491,14 +674,20 @@ mod tests {
         entry.timestamp = now - 100;
 
         let age = entry.age_seconds();
-        assert!(age >= 99 && age <= 101, "Entry should be ~100 seconds old, got {}", age);
+        assert!(
+            (99..=101).contains(&age),
+            "Entry should be ~100 seconds old, got {age}"
+        );
     }
 
     #[test]
     fn test_pipeline_runs_needs_refresh_fresh() {
         let entry = PipelineRunsCacheEntry::new(123, vec![]);
 
-        assert!(!entry.needs_refresh(), "Fresh cache should not need refresh");
+        assert!(
+            !entry.needs_refresh(),
+            "Fresh cache should not need refresh"
+        );
     }
 
     #[test]
@@ -526,7 +715,10 @@ mod tests {
             .as_secs();
         entry.timestamp = now - CICD_CACHE_TTL_SECS;
 
-        assert!(entry.needs_refresh(), "Cache at TTL boundary should need refresh");
+        assert!(
+            entry.needs_refresh(),
+            "Cache at TTL boundary should need refresh"
+        );
     }
 
     #[test]
@@ -605,7 +797,10 @@ mod tests {
     #[test]
     fn test_releases_cache_needs_refresh() {
         let entry = ReleasesCacheEntry::new(789, vec![]);
-        assert!(!entry.needs_refresh(), "Fresh releases cache should not need refresh");
+        assert!(
+            !entry.needs_refresh(),
+            "Fresh releases cache should not need refresh"
+        );
 
         let mut old_entry = ReleasesCacheEntry::new(789, vec![]);
         let now = SystemTime::now()
@@ -613,13 +808,19 @@ mod tests {
             .unwrap()
             .as_secs();
         old_entry.timestamp = now - CICD_CACHE_TTL_SECS - 1;
-        assert!(old_entry.needs_refresh(), "Stale releases cache should need refresh");
+        assert!(
+            old_entry.needs_refresh(),
+            "Stale releases cache should need refresh"
+        );
     }
 
     #[test]
     fn test_timeline_cache_needs_refresh() {
         let entry = TimelineCacheEntry::new(999, vec![]);
-        assert!(!entry.needs_refresh(), "Fresh timeline cache should not need refresh");
+        assert!(
+            !entry.needs_refresh(),
+            "Fresh timeline cache should not need refresh"
+        );
 
         let mut old_entry = TimelineCacheEntry::new(999, vec![]);
         let now = SystemTime::now()
@@ -627,13 +828,19 @@ mod tests {
             .unwrap()
             .as_secs();
         old_entry.timestamp = now - CICD_CACHE_TTL_SECS - 1;
-        assert!(old_entry.needs_refresh(), "Stale timeline cache should need refresh");
+        assert!(
+            old_entry.needs_refresh(),
+            "Stale timeline cache should need refresh"
+        );
     }
 
     #[test]
     fn test_build_log_cache_needs_refresh() {
         let entry = BuildLogCacheEntry::new(111, 222, vec![]);
-        assert!(!entry.needs_refresh(), "Fresh build log cache should not need refresh");
+        assert!(
+            !entry.needs_refresh(),
+            "Fresh build log cache should not need refresh"
+        );
 
         let mut old_entry = BuildLogCacheEntry::new(111, 222, vec![]);
         let now = SystemTime::now()
@@ -641,6 +848,9 @@ mod tests {
             .unwrap()
             .as_secs();
         old_entry.timestamp = now - CICD_CACHE_TTL_SECS - 1;
-        assert!(old_entry.needs_refresh(), "Stale build log cache should need refresh");
+        assert!(
+            old_entry.needs_refresh(),
+            "Stale build log cache should need refresh"
+        );
     }
 }

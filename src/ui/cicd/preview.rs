@@ -1,6 +1,8 @@
 use crate::app::{App, CICDFocus, PipelineDrillDown, ReleaseDrillDown};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+};
 
 /// Strip ANSI escape sequences and control characters from a string
 fn strip_ansi_and_control(s: &str) -> String {
@@ -12,7 +14,7 @@ fn strip_ansi_and_control(s: &str) -> String {
             // Skip ANSI escape sequence: ESC [ ... letter
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume '['
-                // Skip until we hit a letter (the terminator)
+                              // Skip until we hit a letter (the terminator)
                 while let Some(&next) = chars.peek() {
                     chars.next();
                     if next.is_ascii_alphabetic() {
@@ -35,7 +37,9 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let focused = app.cicd_focus == CICDFocus::Preview;
 
     let border_color = if focused {
-        app.config.theme.parse_color(&app.config.theme.border_active)
+        app.config
+            .theme
+            .parse_color(&app.config.theme.border_active)
     } else {
         app.config.theme.parse_color(&app.config.theme.border)
     };
@@ -88,10 +92,7 @@ fn draw_default_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: 
                      Path: {}\n\n\
                      Press [Enter] to view runs\n\
                      Press [o] to open in browser",
-                    pipeline.name,
-                    pipeline.id,
-                    status_icon,
-                    pipeline.path
+                    pipeline.name, pipeline.id, status_icon, pipeline.path
                 )
             } else {
                 "Select a pipeline to view details".to_string()
@@ -105,9 +106,7 @@ fn draw_default_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: 
                      Path: {}\n\n\
                      Press [T] to trigger new release\n\
                      Press [o] to open in browser",
-                    release_def.name,
-                    release_def.id,
-                    release_def.path
+                    release_def.name, release_def.id, release_def.path
                 )
             } else {
                 "Select a release definition to view details".to_string()
@@ -135,10 +134,14 @@ fn draw_run_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Colo
         let build_num = run.build_number.as_deref().unwrap_or("?");
         let status = run.status.as_deref().unwrap_or("unknown");
         let result = run.result.as_deref().unwrap_or("-");
-        let branch = run.source_branch.as_deref()
+        let branch = run
+            .source_branch
+            .as_deref()
             .unwrap_or("")
             .trim_start_matches("refs/heads/");
-        let requested_by = run.requested_for.as_ref()
+        let requested_by = run
+            .requested_for
+            .as_ref()
             .and_then(|u| u.display_name.as_deref())
             .unwrap_or("unknown");
 
@@ -168,7 +171,8 @@ fn draw_run_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Colo
              Press [o] to open in browser\n\
              Press [Esc] to go back",
             build_num,
-            status_icon, status,
+            status_icon,
+            status,
             result,
             branch,
             requested_by,
@@ -200,7 +204,12 @@ fn draw_release_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: 
         let mut lines: Vec<Line> = vec![
             Line::from(vec![
                 Span::styled("Release: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&release.name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    &release.name,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
                 Span::styled("ID: ", Style::default().fg(Color::DarkGray)),
@@ -208,17 +217,29 @@ fn draw_release_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: 
             ]),
             Line::from(vec![
                 Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(release.status.as_deref().unwrap_or("-"), Style::default().fg(Color::White)),
+                Span::styled(
+                    release.status.as_deref().unwrap_or("-"),
+                    Style::default().fg(Color::White),
+                ),
             ]),
             Line::from(vec![
                 Span::styled("Created: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
-                    release.created_on.as_deref().map(format_time).unwrap_or_else(|| "-".to_string()),
-                    Style::default().fg(Color::White)
+                    release
+                        .created_on
+                        .as_deref()
+                        .map(format_time)
+                        .unwrap_or_else(|| "-".to_string()),
+                    Style::default().fg(Color::White),
                 ),
             ]),
             Line::from(""),
-            Line::styled("── Stages ──", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Line::styled(
+                "── Stages ──",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ];
 
         // Show environments/stages
@@ -244,11 +265,17 @@ fn draw_release_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: 
                 ]));
             }
         } else {
-            lines.push(Line::styled("  Loading stages...", Style::default().fg(Color::DarkGray)));
+            lines.push(Line::styled(
+                "  Loading stages...",
+                Style::default().fg(Color::DarkGray),
+            ));
         }
 
         lines.push(Line::from(""));
-        lines.push(Line::styled("Press [o] to open in browser", Style::default().fg(Color::DarkGray)));
+        lines.push(Line::styled(
+            "Press [o] to open in browser",
+            Style::default().fg(Color::DarkGray),
+        ));
 
         let total_lines = lines.len();
         let visible_height = inner.height as usize;
@@ -260,8 +287,7 @@ fn draw_release_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: 
         }
         let scroll = app.cicd_preview_scroll as usize;
 
-        let paragraph = Paragraph::new(lines)
-            .scroll((scroll as u16, 0));
+        let paragraph = Paragraph::new(lines).scroll((scroll as u16, 0));
         f.render_widget(paragraph, inner);
 
         // Draw scrollbar if content exceeds visible area
@@ -281,8 +307,7 @@ fn draw_release_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: 
         } else {
             "Select a release to view details"
         };
-        let paragraph = Paragraph::new(msg)
-            .style(Style::default().fg(Color::DarkGray));
+        let paragraph = Paragraph::new(msg).style(Style::default().fg(Color::DarkGray));
         f.render_widget(paragraph, inner);
     }
 }
@@ -290,7 +315,8 @@ fn draw_release_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: 
 fn draw_log_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Color) {
     // Get selected task info for title
     let tasks = app.get_timeline_tasks();
-    let task_name = tasks.get(app.selected_task_idx)
+    let task_name = tasks
+        .get(app.selected_task_idx)
         .and_then(|t| t.name.as_deref())
         .unwrap_or("Task");
 
@@ -309,8 +335,7 @@ fn draw_log_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Colo
         } else {
             "No logs available. Press [Enter] on a task to load logs."
         };
-        let paragraph = Paragraph::new(msg)
-            .style(Style::default().fg(Color::DarkGray));
+        let paragraph = Paragraph::new(msg).style(Style::default().fg(Color::DarkGray));
         f.render_widget(paragraph, inner);
     } else {
         // Calculate visible area
@@ -340,12 +365,20 @@ fn draw_log_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Colo
                 let truncated: String = clean_line.chars().take(max_width).collect();
 
                 // Color code log lines based on content
-                let style = if truncated.contains("error") || truncated.contains("Error") || truncated.contains("ERROR") {
+                let style = if truncated.contains("error")
+                    || truncated.contains("Error")
+                    || truncated.contains("ERROR")
+                {
                     Style::default().fg(Color::Red)
-                } else if truncated.contains("warning") || truncated.contains("Warning") || truncated.contains("WARN") {
+                } else if truncated.contains("warning")
+                    || truncated.contains("Warning")
+                    || truncated.contains("WARN")
+                {
                     Style::default().fg(Color::Yellow)
                 } else if truncated.contains("##[section]") {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 } else if truncated.starts_with("##[") {
                     Style::default().fg(Color::Blue)
                 } else {
@@ -365,12 +398,15 @@ fn draw_log_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Colo
                 .end_symbol(Some("↓"));
             // Use max_scroll as the scrollable range so position matches correctly
             // At bottom: position == max_scroll, scrollbar at bottom
-            let mut scrollbar_state = ScrollbarState::new(max_scroll.max(1))
-                .position(app.log_scroll);
+            let mut scrollbar_state =
+                ScrollbarState::new(max_scroll.max(1)).position(app.log_scroll);
 
             f.render_stateful_widget(
                 scrollbar,
-                area.inner(Margin { vertical: 1, horizontal: 0 }),
+                area.inner(Margin {
+                    vertical: 1,
+                    horizontal: 0,
+                }),
                 &mut scrollbar_state,
             );
         }
@@ -378,7 +414,9 @@ fn draw_log_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Colo
 }
 
 fn draw_stage_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Color) {
-    let stage_name = app.release_stages.get(app.selected_release_stage_idx)
+    let stage_name = app
+        .release_stages
+        .get(app.selected_release_stage_idx)
         .map(|s| s.name.as_str())
         .unwrap_or("Stage");
 
@@ -393,27 +431,48 @@ fn draw_stage_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Co
 
     if let Some(stage) = app.release_stages.get(app.selected_release_stage_idx) {
         // Check for pending approval first
-        let has_pending_approval = stage.pre_deploy_approvals.iter()
+        let has_pending_approval = stage
+            .pre_deploy_approvals
+            .iter()
             .any(|a| a.status.as_deref() == Some("pending"));
 
         let (icon, icon_color, status_text) = if has_pending_approval {
-            ("⏳", Color::Yellow, "pending approval (press 'a' to approve)")
+            (
+                "⏳",
+                Color::Yellow,
+                "pending approval (press 'a' to approve)",
+            )
         } else {
             match stage.status.as_deref() {
                 Some("succeeded") => ("✓", Color::Green, "succeeded"),
-                Some("rejected") | Some("failed") => ("✗", Color::Red, stage.status.as_deref().unwrap_or("failed")),
+                Some("rejected") | Some("failed") => {
+                    ("✗", Color::Red, stage.status.as_deref().unwrap_or("failed"))
+                }
                 Some("inProgress") => ("⟳", Color::Cyan, "inProgress"),
                 Some("canceled") | Some("cancelled") => ("⊘", Color::Yellow, "canceled"),
                 Some("partiallySucceeded") => ("◐", Color::Yellow, "partiallySucceeded"),
-                Some("notStarted") | Some("scheduled") => ("○", Color::DarkGray, stage.status.as_deref().unwrap_or("notStarted")),
-                _ => ("○", Color::DarkGray, stage.status.as_deref().unwrap_or("unknown")),
+                Some("notStarted") | Some("scheduled") => (
+                    "○",
+                    Color::DarkGray,
+                    stage.status.as_deref().unwrap_or("notStarted"),
+                ),
+                _ => (
+                    "○",
+                    Color::DarkGray,
+                    stage.status.as_deref().unwrap_or("unknown"),
+                ),
             }
         };
 
         let lines: Vec<Line> = vec![
             Line::from(vec![
                 Span::styled("Stage: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&stage.name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    &stage.name,
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
             ]),
             Line::from(vec![
                 Span::styled("ID: ", Style::default().fg(Color::DarkGray)),
@@ -421,11 +480,20 @@ fn draw_stage_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Co
             ]),
             Line::from(vec![
                 Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{icon} {status_text}"), Style::default().fg(icon_color)),
+                Span::styled(
+                    format!("{icon} {status_text}"),
+                    Style::default().fg(icon_color),
+                ),
             ]),
             Line::from(""),
-            Line::styled("Press [Enter] to view tasks", Style::default().fg(Color::DarkGray)),
-            Line::styled("Press [Esc] to go back", Style::default().fg(Color::DarkGray)),
+            Line::styled(
+                "Press [Enter] to view tasks",
+                Style::default().fg(Color::DarkGray),
+            ),
+            Line::styled(
+                "Press [Esc] to go back",
+                Style::default().fg(Color::DarkGray),
+            ),
         ];
 
         let paragraph = Paragraph::new(lines);
@@ -436,15 +504,16 @@ fn draw_stage_preview(f: &mut Frame, app: &mut App, area: Rect, border_color: Co
         } else {
             "Select a stage to view details"
         };
-        let paragraph = Paragraph::new(msg)
-            .style(Style::default().fg(Color::DarkGray));
+        let paragraph = Paragraph::new(msg).style(Style::default().fg(Color::DarkGray));
         f.render_widget(paragraph, inner);
     }
 }
 
 fn draw_release_task_log(f: &mut Frame, app: &mut App, area: Rect, border_color: Color) {
     // Get selected task info for title
-    let task_name = app.release_tasks.get(app.selected_release_task_idx)
+    let task_name = app
+        .release_tasks
+        .get(app.selected_release_task_idx)
         .and_then(|t| t.name.as_deref())
         .unwrap_or("Task");
 
@@ -463,8 +532,7 @@ fn draw_release_task_log(f: &mut Frame, app: &mut App, area: Rect, border_color:
         } else {
             "No logs available. Press [Enter] on a task to load logs."
         };
-        let paragraph = Paragraph::new(msg)
-            .style(Style::default().fg(Color::DarkGray));
+        let paragraph = Paragraph::new(msg).style(Style::default().fg(Color::DarkGray));
         f.render_widget(paragraph, inner);
     } else {
         // Same approach as pipeline logs - no wrapping, manual line slicing
@@ -494,12 +562,20 @@ fn draw_release_task_log(f: &mut Frame, app: &mut App, area: Rect, border_color:
                 let truncated: String = clean_line.chars().take(max_width).collect();
 
                 // Color code log lines based on content
-                let style = if truncated.contains("error") || truncated.contains("Error") || truncated.contains("ERROR") {
+                let style = if truncated.contains("error")
+                    || truncated.contains("Error")
+                    || truncated.contains("ERROR")
+                {
                     Style::default().fg(Color::Red)
-                } else if truncated.contains("warning") || truncated.contains("Warning") || truncated.contains("WARN") {
+                } else if truncated.contains("warning")
+                    || truncated.contains("Warning")
+                    || truncated.contains("WARN")
+                {
                     Style::default().fg(Color::Yellow)
                 } else if truncated.contains("##[section]") {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
                 } else if truncated.starts_with("##[") {
                     Style::default().fg(Color::Blue)
                 } else {
@@ -519,12 +595,15 @@ fn draw_release_task_log(f: &mut Frame, app: &mut App, area: Rect, border_color:
                 .end_symbol(Some("↓"));
             // Use max_scroll as the scrollable range so position matches correctly
             // At bottom: position == max_scroll, scrollbar at bottom
-            let mut scrollbar_state = ScrollbarState::new(max_scroll.max(1))
-                .position(app.log_scroll);
+            let mut scrollbar_state =
+                ScrollbarState::new(max_scroll.max(1)).position(app.log_scroll);
 
             f.render_stateful_widget(
                 scrollbar,
-                area.inner(Margin { vertical: 1, horizontal: 0 }),
+                area.inner(Margin {
+                    vertical: 1,
+                    horizontal: 0,
+                }),
                 &mut scrollbar_state,
             );
         }

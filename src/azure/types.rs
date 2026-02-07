@@ -113,9 +113,9 @@ pub struct PipelineRun {
     #[serde(default)]
     pub build_number: Option<String>,
     #[serde(default)]
-    pub status: Option<String>,  // completed, inProgress, notStarted
+    pub status: Option<String>, // completed, inProgress, notStarted
     #[serde(default)]
-    pub result: Option<String>,  // succeeded, failed, canceled
+    pub result: Option<String>, // succeeded, failed, canceled
     #[serde(default)]
     pub source_branch: Option<String>,
     #[serde(default)]
@@ -168,7 +168,7 @@ pub struct Release {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
-    pub status: Option<String>,  // active, abandoned
+    pub status: Option<String>, // active, abandoned
     #[serde(default)]
     pub created_on: Option<String>,
     #[serde(default)]
@@ -194,7 +194,7 @@ pub struct ReleaseEnvironment {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
-    pub status: Option<String>,  // notStarted, inProgress, succeeded, rejected, canceled
+    pub status: Option<String>, // notStarted, inProgress, succeeded, rejected, canceled
     #[serde(default)]
     pub deploy_steps: Vec<ReleaseDeployStep>,
     #[serde(default)]
@@ -206,9 +206,9 @@ pub struct ReleaseEnvironment {
 pub struct ReleaseApproval {
     pub id: i32,
     #[serde(default)]
-    pub status: Option<String>,  // pending, approved, rejected
+    pub status: Option<String>, // pending, approved, rejected
     #[serde(default)]
-    pub approval_type: Option<String>,  // preDeploy, postDeploy
+    pub approval_type: Option<String>, // preDeploy, postDeploy
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -267,7 +267,7 @@ pub struct ReleaseTask {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
-    pub status: Option<String>,  // succeeded, failed, inProgress, skipped
+    pub status: Option<String>, // succeeded, failed, inProgress, skipped
     #[serde(default)]
     pub log_url: Option<String>,
     #[serde(default)]
@@ -283,13 +283,13 @@ pub struct TimelineRecord {
     pub name: Option<String>,
     #[serde(rename = "type")]
     #[serde(default)]
-    pub record_type: Option<String>,  // Stage, Job, Task, Checkpoint
+    pub record_type: Option<String>, // Stage, Job, Task, Checkpoint
     #[serde(default)]
     pub parent_id: Option<String>,
     #[serde(default)]
-    pub state: Option<String>,  // pending, inProgress, completed
+    pub state: Option<String>, // pending, inProgress, completed
     #[serde(default)]
-    pub result: Option<String>,  // succeeded, failed, canceled
+    pub result: Option<String>, // succeeded, failed, canceled
     #[serde(default)]
     pub order: Option<i32>,
     #[serde(default)]
@@ -334,9 +334,9 @@ pub struct BuildLogResponse {
 pub struct Approval {
     pub id: i32,
     #[serde(default)]
-    pub approval_type: Option<String>,  // preDeploy, postDeploy
+    pub approval_type: Option<String>, // preDeploy, postDeploy
     #[serde(default)]
-    pub status: Option<String>,         // pending, approved, rejected
+    pub status: Option<String>, // pending, approved, rejected
     #[serde(default)]
     pub created_on: Option<String>,
     #[serde(default)]
@@ -421,17 +421,249 @@ pub struct ReleaseArtifact {
     pub definition_reference: Option<serde_json::Value>,
 }
 
+// Pull Request types
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Repository {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequest {
+    #[serde(rename = "pullRequestId")]
+    pub pull_request_id: i32,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default, rename = "sourceRefName")]
+    pub source_branch: Option<String>,
+    #[serde(default, rename = "targetRefName")]
+    pub target_branch: Option<String>,
+    #[serde(default)]
+    pub is_draft: bool,
+    #[serde(default)]
+    pub merge_status: Option<String>,
+    #[serde(default)]
+    pub code_review_id: Option<i32>,
+    #[serde(default)]
+    pub creation_date: Option<String>,
+    #[serde(default)]
+    pub created_by: Option<PRIdentityRef>,
+    #[serde(default)]
+    pub auto_complete_set_by: Option<PRIdentityRef>,
+    #[serde(default)]
+    pub closed_by: Option<PRIdentityRef>,
+    #[serde(default)]
+    pub closed_date: Option<String>,
+    #[serde(default)]
+    pub completion_options: Option<PRCompletionOptions>,
+    #[serde(default)]
+    pub repository: Option<PRRepository>,
+    #[serde(default)]
+    pub reviewers: Vec<PRReviewer>,
+    #[serde(default)]
+    pub labels: Option<Vec<PRLabel>>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRIdentityRef {
+    pub display_name: String,
+    #[serde(default)]
+    pub unique_name: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub image_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRReviewer {
+    pub display_name: String,
+    #[serde(default)]
+    pub unique_name: Option<String>,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub image_url: Option<String>,
+    #[serde(default)]
+    pub vote: i32,
+    #[serde(default)]
+    pub has_declined: bool,
+    #[serde(default)]
+    pub is_flagged: bool,
+    #[serde(default)]
+    pub is_required: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRCompletionOptions {
+    #[serde(default)]
+    pub merge_strategy: Option<String>,
+    #[serde(default)]
+    pub delete_source_branch: Option<bool>,
+    #[serde(default)]
+    pub squash_merge: Option<bool>,
+    #[serde(default)]
+    pub merge_commit_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRRepository {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub project: Option<PRProject>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRProject {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRThread {
+    pub id: i32,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub is_deleted: bool,
+    #[serde(default)]
+    pub published_date: Option<String>,
+    #[serde(default)]
+    pub last_updated_date: Option<String>,
+    #[serde(default)]
+    pub comments: Vec<PRComment>,
+    #[serde(default)]
+    pub thread_context: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRComment {
+    pub id: i32,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub comment_type: Option<String>,
+    #[serde(default)]
+    pub published_date: Option<String>,
+    #[serde(default)]
+    pub author: Option<PRIdentityRef>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRPolicy {
+    #[serde(default)]
+    pub evaluation_id: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub configuration: Option<PRPolicyConfig>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRPolicyConfig {
+    #[serde(default)]
+    pub is_blocking: bool,
+    #[serde(default)]
+    pub is_enabled: bool,
+    #[serde(rename = "type", default)]
+    pub policy_type: Option<PRPolicyType>,
+    #[serde(default)]
+    pub settings: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRPolicyType {
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRThreadsResponse {
+    #[serde(default)]
+    pub value: Vec<PRThread>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PRLabel {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Result of a PR action (vote, comment, etc.)
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub enum PRActionResult {
+    Voted { pr_id: i32, vote: String },
+    Updated { pr: PullRequest },
+    Created { pr: PullRequest },
+    Commented { pr_id: i32 },
+    ActionError { message: String },
+}
+
+impl PullRequest {
+    /// Vote icons for PR reviewers
+    pub fn vote_icon(vote: i32) -> &'static str {
+        match vote {
+            10 => "✓",  // Approved
+            5 => "✓~",  // Approved with suggestions
+            0 => "○",   // No vote
+            -5 => "⏳", // Waiting for author
+            -10 => "✗", // Rejected
+            _ => "?",
+        }
+    }
+
+    /// Status icons for PR status
+    pub fn status_icon(&self) -> &'static str {
+        if self.is_draft {
+            return "◑"; // Draft
+        }
+        match self.status.as_deref() {
+            Some("active") => "●",    // Active
+            Some("completed") => "✓", // Completed
+            Some("abandoned") => "✗", // Abandoned
+            _ => "?",
+        }
+    }
+
+    /// Strip "refs/heads/" prefix from branch names
+    pub fn short_branch(branch: &str) -> &str {
+        branch.strip_prefix("refs/heads/").unwrap_or(branch)
+    }
+}
+
 impl WorkItem {
     /// State icons - consistent progression from empty to filled to complete
     pub fn state_icon(&self) -> &'static str {
         match self.fields.state.as_str() {
-            "New" => "○",                     // Empty circle - not started
-            "In Progress" => "◐",             // Half circle - working on it
-            "Done In Stage" => "●",           // Filled - staged
-            "Done Not Released" => "●",       // Filled - not released
-            "Done" => "●",                    // Filled circle - complete
-            "Tested w/Bugs" => "●",           // Red dot - has bugs
-            "Removed" => "○",                 // Empty (removed/cancelled)
+            "New" => "○",               // Empty circle - not started
+            "In Progress" => "◐",       // Half circle - working on it
+            "Done In Stage" => "●",     // Filled - staged
+            "Done Not Released" => "●", // Filled - not released
+            "Done" => "●",              // Filled circle - complete
+            "Tested w/Bugs" => "●",     // Red dot - has bugs
+            "Removed" => "○",           // Empty (removed/cancelled)
             _ => "○",
         }
     }
@@ -454,23 +686,48 @@ impl WorkItem {
         match self.fields.work_item_type.as_str() {
             "Task" => vec!["To Do", "In Progress", "Done", "Removed"],
             "Bug" | "Product Backlog Item" | "User Story" => vec![
-                "New", "In Progress", "Done In Stage", "Done Not Released",
-                "Done", "Tested w/Bugs"
+                "New",
+                "In Progress",
+                "Done In Stage",
+                "Done Not Released",
+                "Done",
+                "Tested w/Bugs",
             ],
-            _ => vec!["New", "In Progress", "Done In Stage", "Done Not Released", "Done"],
+            _ => vec![
+                "New",
+                "In Progress",
+                "Done In Stage",
+                "Done Not Released",
+                "Done",
+            ],
         }
     }
 }
 
 /// Result of a CI/CD action (cancel, retrigger, etc.)
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum CICDActionResult {
-    PipelineRunCanceled { run_id: i32 },
-    PipelineRunRetriggered { run: PipelineRun },
-    ReleaseAbandoned { release_id: i32 },
-    ReleaseEnvironmentCanceled { release_id: i32, environment_name: String },
-    ReleaseEnvironmentRedeployed { release_id: i32, environment_name: String },
-    ActionError { message: String },
+    PipelineRunCanceled {
+        run_id: i32,
+    },
+    PipelineRunRetriggered {
+        run: Box<PipelineRun>,
+    },
+    ReleaseAbandoned {
+        release_id: i32,
+    },
+    ReleaseEnvironmentCanceled {
+        release_id: i32,
+        environment_name: String,
+    },
+    ReleaseEnvironmentRedeployed {
+        release_id: i32,
+        environment_name: String,
+    },
+    ActionError {
+        message: String,
+    },
 }
 
 #[cfg(test)]

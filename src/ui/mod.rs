@@ -1,6 +1,7 @@
 mod cicd;
 mod help;
 mod input;
+mod prs;
 mod tasks;
 
 use crate::app::{App, InputMode, View};
@@ -22,9 +23,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Sprint/project bar
-            Constraint::Min(0),     // Main content
-            Constraint::Length(1),  // Status/help bar
+            Constraint::Length(3), // Sprint/project bar
+            Constraint::Min(0),    // Main content
+            Constraint::Length(1), // Status/help bar
         ])
         .split(size);
 
@@ -34,6 +35,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // Main content: route based on current view
     match app.current_view {
         View::Tasks => draw_tasks_view(f, app, chunks[1]),
+        View::PRs => prs::draw(f, app, chunks[1]),
         View::CICD => cicd::draw(f, app, chunks[1]),
     }
 
@@ -52,7 +54,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         InputMode::FilterAssignee => input::draw_filter_assignee_dropdown(f, app, size),
         InputMode::CICDSearch => {} // Handled inline in panels
         InputMode::Normal => {}
-        InputMode::ReleaseTriggerDialog | InputMode::ApprovalConfirm | InputMode::ConfirmAction => {} // Dialogs rendered in cicd module
+        InputMode::ReleaseTriggerDialog | InputMode::ApprovalConfirm | InputMode::ConfirmAction => {
+        } // Dialogs rendered in cicd module
     }
 
     // Loading overlay
@@ -65,10 +68,7 @@ fn draw_tasks_view(f: &mut Frame, app: &mut App, area: Rect) {
     // Main content: 50/50 horizontal split
     let content = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50),
-        ])
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(area);
 
     // Left: Work items list
@@ -100,25 +100,27 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                     parts.push(format!("Assignee:{assignee}"));
                 }
                 if !app.search_query.is_empty() {
-                    parts.push(format!("Search:\"{}\"", app.search_query));
+                    let query = &app.search_query;
+                    parts.push(format!("Search:\"{query}\""));
                 }
 
                 if !parts.is_empty() {
-                    format!("Filters: {}  │  c:clear  s:state  a:user  f:search", parts.join("  "))
+                    let joined = parts.join("  ");
+                    format!("Filters: {joined}  │  c:clear  s:state  a:user  f:search")
                 } else {
                     match app.input_mode {
                         InputMode::Normal => {
                             match app.focus {
                                 crate::app::Focus::WorkItems => {
-                                    "j/k:nav  Enter:expand  t:toggle  o:open  s:state  a:user  S:edit  A:assign  f:search  I:sprint  l:preview  ?:help  q:quit".into()
+                                    "j/k:nav  Enter:expand  t:toggle  o:open  s:state  a:user  S:edit  A:assign  f:search  I:sprint  l:preview  r:refresh  ?:help  q:quit".into()
                                 }
                                 crate::app::Focus::Preview => {
                                     match app.preview_tab {
                                         crate::app::PreviewTab::Details => {
-                                            "j/k:scroll  Tab:refs  h:back  o:open  ?:help  q:quit".into()
+                                            "j/k:scroll  Tab:refs  h:back  o:open  r:refresh  ?:help  q:quit".into()
                                         }
                                         crate::app::PreviewTab::References => {
-                                            "j/k:select  ^d/^u:page  Tab:details  h:back  o:open  ?:help  q:quit".into()
+                                            "j/k:select  ^d/^u:page  Tab:details  h:back  o:open  r:refresh  ?:help  q:quit".into()
                                         }
                                     }
                                 }
@@ -127,6 +129,29 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                         InputMode::Search => "Enter:confirm  Esc:cancel".into(),
                         _ => "j/k:select  Enter:confirm  Esc:cancel".into(),
                     }
+                }
+            }
+            View::PRs => {
+                // PR view keybindings based on focus and drill-down
+                match app.input_mode {
+                    InputMode::Normal => {
+                        match app.pr_focus {
+                            crate::app::PRFocus::Preview => {
+                                "j/k:scroll  Tab:switch tab  h:back  o:open  ?:help  q:quit".into()
+                            }
+                            _ => {
+                                match app.pr_drill_down {
+                                    crate::app::PRDrillDown::Repos => {
+                                        "j/k:nav  f:search  Enter:PRs  o:open  r:refresh  ?:help  q:quit".into()
+                                    }
+                                    crate::app::PRDrillDown::PRs => {
+                                        "j/k:nav  h/l:pane  f:search  Enter:details  Esc:back  o:open  r:refresh  ?:help  q:quit".into()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => "j/k:select  Enter:confirm  Esc:cancel".into(),
                 }
             }
             View::CICD => {
@@ -217,7 +242,11 @@ pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 }
 
 // Helper: styled block with focus indicator
-pub fn styled_block<'a>(title: &'a str, focused: bool, theme: &'a crate::config::Theme) -> Block<'a> {
+pub fn styled_block<'a>(
+    title: &'a str,
+    focused: bool,
+    theme: &'a crate::config::Theme,
+) -> Block<'a> {
     let border_color = if focused {
         theme.parse_color(&theme.border_active)
     } else {

@@ -105,6 +105,7 @@ impl EmbeddedTerminal {
     }
 
     /// Spawn a generic editor for a file
+    #[allow(dead_code)]
     pub fn spawn_editor(&mut self, file_path: &str) -> Result<()> {
         if file_path.is_empty() {
             return Ok(());
@@ -176,6 +177,7 @@ impl EmbeddedTerminal {
             .map(|p| p.screen().cursor_position())
     }
 
+    #[allow(dead_code)]
     pub fn is_running(&self) -> bool {
         *self.running.lock().unwrap()
     }

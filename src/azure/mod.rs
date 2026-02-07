@@ -1,5 +1,5 @@
-pub mod types;
 pub mod client;
+pub mod types;
 
-pub use types::*;
 pub use client::AzureCli;
+pub use types::*;

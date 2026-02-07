@@ -27,16 +27,25 @@ async fn main() -> anyhow::Result<()> {
     match client.get_sprints().await {
         Ok(sprints) => {
             println!("✓ Loaded {} sprints", sprints.len());
-            if let Some(current) = sprints.iter().find(|s| s.attributes.time_frame.as_deref() == Some("current")) {
+            if let Some(current) = sprints
+                .iter()
+                .find(|s| s.attributes.time_frame.as_deref() == Some("current"))
+            {
                 println!("  Current sprint: {} ({})", current.name, current.path);
             }
 
             // Test 2: Get work items for current sprint
-            if let Some(sprint) = sprints.iter().find(|s| s.attributes.time_frame.as_deref() == Some("current")) {
+            if let Some(sprint) = sprints
+                .iter()
+                .find(|s| s.attributes.time_frame.as_deref() == Some("current"))
+            {
                 println!("\n--- Test 2: get_sprint_work_items (with hierarchy debug) ---");
                 match client.get_sprint_work_items(&sprint.path).await {
                     Ok(items) => {
-                        println!("✓ Loaded {} top-level work items (after hierarchy)", items.len());
+                        println!(
+                            "✓ Loaded {} top-level work items (after hierarchy)",
+                            items.len()
+                        );
 
                         // Count total items including children
                         fn count_all(items: &[lazyops::azure::WorkItem]) -> usize {
@@ -49,7 +58,8 @@ async fn main() -> anyhow::Result<()> {
                         fn print_tree(items: &[lazyops::azure::WorkItem], indent: usize) {
                             for item in items {
                                 let prefix = "  ".repeat(indent);
-                                println!("{}#{} [{}] {} (children: {})",
+                                println!(
+                                    "{}#{} [{}] {} (children: {})",
                                     prefix,
                                     item.id,
                                     item.fields.work_item_type,
@@ -67,7 +77,6 @@ async fn main() -> anyhow::Result<()> {
                     }
                     Err(e) => println!("✗ Failed: {e}"),
                 }
-
             }
         }
         Err(e) => println!("✗ Failed: {e}"),
@@ -79,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
 
 fn truncate(s: &str, max: usize) -> String {
     if s.len() > max {
-        format!("{}...", &s[..max-3])
+        format!("{}...", &s[..max - 3])
     } else {
         s.to_string()
     }

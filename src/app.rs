@@ -1,40 +1,69 @@
-use crate::azure::{AzureCli, WorkItem, Sprint, User, WorkItemRelation, Pipeline, PipelineRun, ReleaseDefinition, Release, TimelineRecord};
-use crate::cache::{self, CacheEntry, CICDCacheEntry};
+use crate::azure::{
+    AzureCli, Pipeline, PipelineRun, Release, ReleaseDefinition, Sprint, TimelineRecord, User,
+    WorkItem, WorkItemRelation,
+};
+use crate::cache::{self, CICDCacheEntry, CacheEntry};
 use crate::config::Config;
 use crate::terminal::EmbeddedTerminal;
 use anyhow::Result;
-use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::widgets::ListState;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
 
 /// Result type for background CI/CD loading
+#[allow(dead_code)]
 pub enum CICDLoadResult {
     Pipelines(Vec<Pipeline>),
     ReleaseDefinitions(Vec<ReleaseDefinition>),
     PipelineRuns(Vec<PipelineRun>),
     Releases(Vec<Release>),
-    ReleaseDetail(usize, Release),  // (index in release_list, release with environments)
-    ReleaseStages(Vec<crate::azure::ReleaseEnvironment>),  // Stages for selected release
-    ReleaseTasks(Vec<crate::azure::ReleaseTask>),          // Tasks for selected stage
-    ReleaseTaskLog(Vec<String>),                           // Log for selected task
+    ReleaseDetail(usize, Release), // (index in release_list, release with environments)
+    ReleaseStages(Vec<crate::azure::ReleaseEnvironment>), // Stages for selected release
+    ReleaseTasks(Vec<crate::azure::ReleaseTask>), // Tasks for selected stage
+    ReleaseTaskLog(Vec<String>),   // Log for selected task
     Timeline(Vec<TimelineRecord>),
     BuildLog(Vec<String>),
     PendingApprovals(Vec<crate::azure::Approval>),
     ReleaseDefinitionDetail(crate::azure::ReleaseDefinitionDetail),
     ReleaseCreated(Release),
-    ApprovalUpdated { approval_id: i32, release_id: i32, status: String },
+    #[allow(dead_code)]
+    ApprovalUpdated {
+        approval_id: i32,
+        release_id: i32,
+        status: String,
+    },
     PipelineRunCanceled(i32),
     PipelineRunRetriggered(PipelineRun),
     ReleaseCanceled(i32),
-    ReleaseEnvironmentCanceled { release_id: i32, environment_name: String },
-    ReleaseEnvironmentRedeployed { release_id: i32, environment_name: String },
+    ReleaseEnvironmentCanceled {
+        release_id: i32,
+        environment_name: String,
+    },
+    ReleaseEnvironmentRedeployed {
+        release_id: i32,
+        environment_name: String,
+    },
     TimelineDelta {
         build_id: i32,
         records: Vec<TimelineRecord>,
         change_id: Option<i32>,
     },
+    Error(String),
+}
+
+/// Result type for background PR loading
+#[allow(dead_code)]
+pub enum PRLoadResult {
+    Repositories(Vec<crate::azure::Repository>),
+    PullRequests(PRFocus, Vec<crate::azure::PullRequest>),
+    PRDetail(Box<crate::azure::PullRequest>),
+    PRThreads(Vec<crate::azure::PRThread>),
+    PRPolicies(Vec<crate::azure::PRPolicy>),
+    PRWorkItems(serde_json::Value),
+    PRVoted { pr_id: i32, vote: String },
+    PRCommented { pr_id: i32 },
     Error(String),
 }
 
@@ -55,10 +84,11 @@ pub enum InputMode {
     ProjectSelect,
     FilterState,
     FilterAssignee,
-    CICDSearch,  // Fuzzy search in CICD view
+    CICDSearch, // Fuzzy search in CICD view
     ReleaseTriggerDialog,
+    #[allow(dead_code)]
     ApprovalConfirm,
-    ConfirmAction,  // For cancel/retrigger confirmation dialog
+    ConfirmAction, // For cancel/retrigger confirmation dialog
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -72,7 +102,101 @@ pub enum PreviewTab {
 pub enum View {
     #[default]
     Tasks,
+    PRs,
+    #[allow(clippy::upper_case_acronyms)]
     CICD,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PRFocus {
+    #[default]
+    Active,
+    Mine,
+    Completed,
+    Abandoned,
+    Preview,
+}
+
+impl PRFocus {
+    pub fn next_pane(&self) -> Self {
+        match self {
+            Self::Active => Self::Mine,
+            Self::Mine => Self::Completed,
+            Self::Completed => Self::Abandoned,
+            Self::Abandoned => Self::Active,
+            Self::Preview => Self::Preview,
+        }
+    }
+
+    pub fn prev_pane(&self) -> Self {
+        match self {
+            Self::Active => Self::Abandoned,
+            Self::Mine => Self::Active,
+            Self::Completed => Self::Mine,
+            Self::Abandoned => Self::Completed,
+            Self::Preview => Self::Preview,
+        }
+    }
+
+    pub fn is_list(&self) -> bool {
+        !matches!(self, Self::Preview)
+    }
+
+    pub fn filter_status(&self) -> &str {
+        match self {
+            Self::Active | Self::Preview => "active",
+            Self::Mine => "active",
+            Self::Completed => "completed",
+            Self::Abandoned => "abandoned",
+        }
+    }
+
+    pub fn is_mine(&self) -> bool {
+        matches!(self, Self::Mine)
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Active => "Active",
+            Self::Mine => "Mine",
+            Self::Completed => "Completed",
+            Self::Abandoned => "Abandoned",
+            Self::Preview => "Preview",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PRDrillDown {
+    #[default]
+    Repos,
+    PRs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PRPreviewTab {
+    #[default]
+    Details,
+    Policies,
+    Threads,
+}
+
+impl PRPreviewTab {
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Details => Self::Policies,
+            Self::Policies => Self::Threads,
+            Self::Threads => Self::Details,
+        }
+    }
+
+    pub fn prev(&self) -> Self {
+        match self {
+            Self::Details => Self::Threads,
+            Self::Policies => Self::Details,
+            Self::Threads => Self::Policies,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -88,8 +212,8 @@ pub enum CICDFocus {
 pub enum PipelineDrillDown {
     #[default]
     None,
-    Runs,   // Viewing runs for selected pipeline
-    Tasks,  // Viewing tasks for selected run
+    Runs,  // Viewing runs for selected pipeline
+    Tasks, // Viewing tasks for selected run
 }
 
 /// Release-specific drill-down state
@@ -97,29 +221,25 @@ pub enum PipelineDrillDown {
 pub enum ReleaseDrillDown {
     #[default]
     None,
-    Items,   // Viewing releases for selected definition
-    Stages,  // Viewing stages/environments for selected release
-    Tasks,   // Viewing tasks for selected stage
+    Items,  // Viewing releases for selected definition
+    Stages, // Viewing stages/environments for selected release
+    Tasks,  // Viewing tasks for selected stage
 }
 
 /// Dialog cursor position for release trigger dialog
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DialogCursor {
     Description,
+    #[default]
     Stages,
     Submit,
     Cancel,
 }
 
-impl Default for DialogCursor {
-    fn default() -> Self {
-        DialogCursor::Stages
-    }
-}
-
 /// Stage selection for release trigger dialog
 #[derive(Debug, Clone)]
 pub struct StageSelection {
+    #[allow(dead_code)]
     pub id: i32,
     pub name: String,
     pub enabled: bool,
@@ -130,6 +250,7 @@ pub struct StageSelection {
 pub struct ReleaseTriggerDialog {
     pub definition_id: i32,
     pub definition_name: String,
+    #[allow(dead_code)]
     pub description: String,
     pub stages: Vec<StageSelection>,
     pub selected_idx: usize,
@@ -154,18 +275,43 @@ impl ReleaseTriggerDialog {
 /// Type of action to confirm
 #[derive(Debug, Clone)]
 pub enum ConfirmActionType {
-    CancelPipelineRun { run_id: i32, build_number: String },
-    RetriggerPipelineRun { pipeline_id: i32, branch: String, build_number: String },
-    CancelRelease { release_id: i32, release_name: String },
-    CancelReleaseEnvironment { release_id: i32, environment_id: i32, release_name: String, environment_name: String },
-    RetriggerReleaseEnvironment { release_id: i32, environment_id: i32, release_name: String, environment_name: String },
-    RejectApproval { approval_id: i32, release_id: i32, environment_name: String },
+    CancelPipelineRun {
+        run_id: i32,
+        build_number: String,
+    },
+    RetriggerPipelineRun {
+        pipeline_id: i32,
+        branch: String,
+        build_number: String,
+    },
+    CancelRelease {
+        release_id: i32,
+        release_name: String,
+    },
+    CancelReleaseEnvironment {
+        release_id: i32,
+        environment_id: i32,
+        release_name: String,
+        environment_name: String,
+    },
+    RetriggerReleaseEnvironment {
+        release_id: i32,
+        environment_id: i32,
+        release_name: String,
+        environment_name: String,
+    },
+    RejectApproval {
+        approval_id: i32,
+        release_id: i32,
+        environment_name: String,
+    },
 }
 
 /// Confirmation dialog state for cancel/retrigger actions
 #[derive(Debug, Clone)]
 pub struct ConfirmActionDialog {
     pub action_type: ConfirmActionType,
+    #[allow(dead_code)]
     pub confirmed: bool,
 }
 
@@ -192,18 +338,30 @@ impl ConfirmActionDialog {
     /// Get description text for the dialog
     pub fn description(&self) -> String {
         match &self.action_type {
-            ConfirmActionType::CancelPipelineRun { build_number, .. } =>
-                format!("Cancel build #{}?", build_number),
-            ConfirmActionType::RetriggerPipelineRun { branch, build_number, .. } =>
-                format!("Retrigger #{} on branch '{}'?", build_number, branch),
-            ConfirmActionType::CancelRelease { release_name, .. } =>
-                format!("Abandon release '{}'?", release_name),
-            ConfirmActionType::CancelReleaseEnvironment { environment_name, release_name, .. } =>
-                format!("Cancel '{}' stage in '{}'?", environment_name, release_name),
-            ConfirmActionType::RetriggerReleaseEnvironment { environment_name, release_name, .. } =>
-                format!("Redeploy '{}' stage in '{}'?", environment_name, release_name),
-            ConfirmActionType::RejectApproval { environment_name, .. } =>
-                format!("Reject approval for '{}'?", environment_name),
+            ConfirmActionType::CancelPipelineRun { build_number, .. } => {
+                format!("Cancel build #{build_number}?")
+            }
+            ConfirmActionType::RetriggerPipelineRun {
+                branch,
+                build_number,
+                ..
+            } => format!("Retrigger #{build_number} on branch '{branch}'?"),
+            ConfirmActionType::CancelRelease { release_name, .. } => {
+                format!("Abandon release '{release_name}'?")
+            }
+            ConfirmActionType::CancelReleaseEnvironment {
+                environment_name,
+                release_name,
+                ..
+            } => format!("Cancel '{environment_name}' stage in '{release_name}'?"),
+            ConfirmActionType::RetriggerReleaseEnvironment {
+                environment_name,
+                release_name,
+                ..
+            } => format!("Redeploy '{environment_name}' stage in '{release_name}'?"),
+            ConfirmActionType::RejectApproval {
+                environment_name, ..
+            } => format!("Reject approval for '{environment_name}'?"),
         }
     }
 }
@@ -245,9 +403,9 @@ pub struct App {
     pub releases: Vec<ReleaseDefinition>,
     pub pipeline_runs: Vec<PipelineRun>,
     pub release_list: Vec<Release>,
-    pub release_stages: Vec<crate::azure::ReleaseEnvironment>,  // Stages for selected release
-    pub release_tasks: Vec<crate::azure::ReleaseTask>,          // Tasks for selected stage
-    pub release_task_logs: Vec<String>,                         // Logs for selected task
+    pub release_stages: Vec<crate::azure::ReleaseEnvironment>, // Stages for selected release
+    pub release_tasks: Vec<crate::azure::ReleaseTask>,         // Tasks for selected stage
+    pub release_task_logs: Vec<String>,                        // Logs for selected task
     pub selected_pipeline_idx: usize,
     pub selected_release_idx: usize,
     pub selected_pipeline_run_idx: usize,
@@ -263,7 +421,7 @@ pub struct App {
     pub task_list_state: ListState,
     pub cicd_preview_scroll: u16,
     pub cicd_loading: bool,
-    pub cicd_search_query: String,  // Fuzzy search for CICD
+    pub cicd_search_query: String, // Fuzzy search for CICD
     pub cicd_rx: Option<mpsc::Receiver<CICDLoadResult>>,
     pub timeline_records: Vec<TimelineRecord>,
     pub selected_task_idx: usize,
@@ -273,22 +431,22 @@ pub struct App {
     pub current_pipeline_id: Option<i32>,
     pub current_release_def_id: Option<i32>,
     pub current_log_id: Option<i32>,
-    pub pipeline_runs_limited: bool,  // True if showing limited (10) runs
+    pub pipeline_runs_limited: bool, // True if showing limited (10) runs
     pub pinned_pipelines: HashSet<i32>,
     pub pinned_releases: HashSet<i32>,
 
     // Live preview state
     pub live_preview_enabled: bool,
-    pub live_preview_build_id: Option<i32>,  // Currently watched build
+    pub live_preview_build_id: Option<i32>, // Currently watched build
     pub live_preview_change_id: Option<i32>, // Last changeId for delta polling
     pub live_preview_last_poll: std::time::Instant,
     pub cicd_tx: Option<mpsc::Sender<CICDLoadResult>>,
 
     // Release auto-refresh
     pub release_auto_refresh: bool,
-    pub release_auto_refresh_id: Option<i32>,  // Release ID to auto-refresh
+    pub release_auto_refresh_id: Option<i32>, // Release ID to auto-refresh
     pub release_last_refresh: std::time::Instant,
-    pub pending_select_release_id: Option<i32>,  // Release to select after list reload
+    pub pending_select_release_id: Option<i32>, // Release to select after list reload
 
     // Approvals
     pub pending_approvals: Vec<crate::azure::Approval>,
@@ -297,7 +455,7 @@ pub struct App {
 
     // Release trigger dialog state
     pub release_trigger_dialog: Option<ReleaseTriggerDialog>,
-    pub approval_dialog: Option<(String, String)>,  // (approval_type, stage_name)
+    pub approval_dialog: Option<(String, String)>, // (approval_type, stage_name)
     pub confirm_action_dialog: Option<ConfirmActionDialog>,
 
     // Status
@@ -378,6 +536,39 @@ pub struct App {
     pub embedded_terminal: Option<EmbeddedTerminal>,
     pub terminal_mode: bool,
     pub log_file_path: Option<String>,
+
+    // PR View state
+    pub pr_focus: PRFocus,
+    pub pr_drill_down: PRDrillDown,
+    pub pr_last_list_focus: PRFocus,
+    pub pr_preview_tab: PRPreviewTab,
+    pub repositories: Vec<crate::azure::Repository>,
+    pub pr_active: Vec<crate::azure::PullRequest>,
+    pub pr_mine: Vec<crate::azure::PullRequest>,
+    pub pr_completed: Vec<crate::azure::PullRequest>,
+    pub pr_abandoned: Vec<crate::azure::PullRequest>,
+    pub pr_threads: Vec<crate::azure::PRThread>,
+    pub pr_policies: Vec<crate::azure::PRPolicy>,
+    pub pr_work_items: Option<serde_json::Value>,
+    pub selected_repo_idx: usize,
+    pub selected_pr_idx: usize,
+    pub selected_pr_idx_active: usize,
+    pub selected_pr_idx_mine: usize,
+    pub selected_pr_idx_completed: usize,
+    pub selected_pr_idx_abandoned: usize,
+    pub selected_thread_idx: usize,
+    pub repo_list_state: ListState,
+    pub pr_list_state: ListState,
+    pub thread_list_state: ListState,
+    pub policy_list_state: ListState,
+    pub pr_preview_scroll: u16,
+    pub pr_loading: bool,
+    pub pr_search_query: String,
+    pub pr_rx: Option<mpsc::Receiver<PRLoadResult>>,
+    pub pr_tx: Option<mpsc::Sender<PRLoadResult>>,
+    pub current_repo_id: Option<String>,
+    pub current_repo_name: Option<String>,
+    pub selected_pr_detail: Option<crate::azure::PullRequest>,
 }
 
 #[derive(Debug, Clone)]
@@ -397,10 +588,63 @@ pub struct ParsedRelation {
 }
 
 impl App {
+    /// Get the PR list for the current (or last active) pane
+    pub fn pull_requests(&self) -> &[crate::azure::PullRequest] {
+        let pane = if self.pr_focus.is_list() {
+            self.pr_focus
+        } else {
+            self.pr_last_list_focus
+        };
+        match pane {
+            PRFocus::Active | PRFocus::Preview => &self.pr_active,
+            PRFocus::Mine => &self.pr_mine,
+            PRFocus::Completed => &self.pr_completed,
+            PRFocus::Abandoned => &self.pr_abandoned,
+        }
+    }
+
+    /// Save current selected_pr_idx to the per-pane index
+    pub fn save_pr_idx(&mut self) {
+        let pane = if self.pr_focus.is_list() {
+            self.pr_focus
+        } else {
+            self.pr_last_list_focus
+        };
+        match pane {
+            PRFocus::Active | PRFocus::Preview => {
+                self.selected_pr_idx_active = self.selected_pr_idx
+            }
+            PRFocus::Mine => self.selected_pr_idx_mine = self.selected_pr_idx,
+            PRFocus::Completed => self.selected_pr_idx_completed = self.selected_pr_idx,
+            PRFocus::Abandoned => self.selected_pr_idx_abandoned = self.selected_pr_idx,
+        }
+    }
+
+    /// Restore selected_pr_idx from the per-pane index
+    pub fn restore_pr_idx(&mut self) {
+        let pane = if self.pr_focus.is_list() {
+            self.pr_focus
+        } else {
+            self.pr_last_list_focus
+        };
+        self.selected_pr_idx = match pane {
+            PRFocus::Active | PRFocus::Preview => self.selected_pr_idx_active,
+            PRFocus::Mine => self.selected_pr_idx_mine,
+            PRFocus::Completed => self.selected_pr_idx_completed,
+            PRFocus::Abandoned => self.selected_pr_idx_abandoned,
+        };
+    }
+
     pub fn new(config: Config) -> Self {
-        let default_idx = config.default_project
-            .as_ref()
-            .and_then(|name| config.projects.iter().position(|p| &p.name == name))
+        // Try last used project first, then config default, then 0
+        let default_idx = cache::load_last_project()
+            .and_then(|name| config.projects.iter().position(|p| p.name == name))
+            .or_else(|| {
+                config
+                    .default_project
+                    .as_ref()
+                    .and_then(|name| config.projects.iter().position(|p| &p.name == name))
+            })
             .unwrap_or(0);
 
         Self {
@@ -501,6 +745,39 @@ impl App {
             embedded_terminal: None,
             terminal_mode: false,
             log_file_path: None,
+
+            // PR state
+            pr_focus: PRFocus::default(),
+            pr_drill_down: PRDrillDown::default(),
+            pr_last_list_focus: PRFocus::Active,
+            pr_preview_tab: PRPreviewTab::default(),
+            repositories: Vec::new(),
+            pr_active: Vec::new(),
+            pr_mine: Vec::new(),
+            pr_completed: Vec::new(),
+            pr_abandoned: Vec::new(),
+            pr_threads: Vec::new(),
+            pr_policies: Vec::new(),
+            pr_work_items: None,
+            selected_repo_idx: 0,
+            selected_pr_idx: 0,
+            selected_pr_idx_active: 0,
+            selected_pr_idx_mine: 0,
+            selected_pr_idx_completed: 0,
+            selected_pr_idx_abandoned: 0,
+            selected_thread_idx: 0,
+            repo_list_state: ListState::default(),
+            pr_list_state: ListState::default(),
+            thread_list_state: ListState::default(),
+            policy_list_state: ListState::default(),
+            pr_preview_scroll: 0,
+            pr_loading: false,
+            pr_search_query: String::new(),
+            pr_rx: None,
+            pr_tx: None,
+            current_repo_id: None,
+            current_repo_name: None,
+            selected_pr_detail: None,
         }
     }
 
@@ -564,12 +841,18 @@ impl App {
         let mut pr_ids: Vec<String> = Vec::new();
         let mut commits: Vec<(String, String)> = Vec::new(); // (repo_guid, hash)
 
-        fn collect_from_items(items: &[WorkItem], pr_ids: &mut Vec<String>, commits: &mut Vec<(String, String)>, existing: &std::collections::HashMap<String, String>) {
+        fn collect_from_items(
+            items: &[WorkItem],
+            pr_ids: &mut Vec<String>,
+            commits: &mut Vec<(String, String)>,
+            existing: &std::collections::HashMap<String, String>,
+        ) {
             for item in items {
                 if let Some(relations) = &item.relations {
                     for rel in relations {
                         let name = rel.attributes.name.as_deref().unwrap_or("");
-                        let parts: Vec<&str> = rel.url.split("%2F").flat_map(|s| s.split("%2f")).collect();
+                        let parts: Vec<&str> =
+                            rel.url.split("%2F").flat_map(|s| s.split("%2f")).collect();
 
                         match name {
                             "Pull Request" => {
@@ -598,7 +881,12 @@ impl App {
             }
         }
 
-        collect_from_items(&self.work_items, &mut pr_ids, &mut commits, &self.relation_titles);
+        collect_from_items(
+            &self.work_items,
+            &mut pr_ids,
+            &mut commits,
+            &self.relation_titles,
+        );
 
         if pr_ids.is_empty() && commits.is_empty() {
             return;
@@ -608,65 +896,86 @@ impl App {
         self.titles_rx = Some(rx);
         self.titles_loader_active = true;
 
-        let client_info = self.current_project().map(|p| (p.organization.clone(), p.project.clone()));
+        let client_info = self
+            .current_project()
+            .map(|p| (p.organization.clone(), p.project.clone()));
 
         if let Some((org, project)) = client_info {
             tokio::spawn(async move {
                 // Fetch PR titles in parallel
-                let pr_futures: Vec<_> = pr_ids.into_iter().map(|pr_id| {
-                    let org = org.clone();
-                    let tx = tx.clone();
-                    async move {
-                        let output = tokio::process::Command::new("az")
-                            .args(["repos", "pr", "show"])
-                            .args(["--id", &pr_id])
-                            .args(["--org", &org])
-                            .args(["--output", "json"])
-                            .output()
-                            .await;
+                let pr_futures: Vec<_> = pr_ids
+                    .into_iter()
+                    .map(|pr_id| {
+                        let org = org.clone();
+                        let tx = tx.clone();
+                        async move {
+                            let output = tokio::process::Command::new("az")
+                                .args(["repos", "pr", "show"])
+                                .args(["--id", &pr_id])
+                                .args(["--org", &org])
+                                .args(["--output", "json"])
+                                .output()
+                                .await;
 
-                        if let Ok(o) = output {
-                            if o.status.success() {
-                                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&o.stdout) {
-                                    if let Some(title) = json.get("title").and_then(|t| t.as_str()) {
-                                        let key = format!("pr:{pr_id}");
-                                        let _ = tx.send((key, title.to_string())).await;
+                            if let Ok(o) = output {
+                                if o.status.success() {
+                                    if let Ok(json) =
+                                        serde_json::from_slice::<serde_json::Value>(&o.stdout)
+                                    {
+                                        if let Some(title) =
+                                            json.get("title").and_then(|t| t.as_str())
+                                        {
+                                            let key = format!("pr:{pr_id}");
+                                            let _ = tx.send((key, title.to_string())).await;
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Fetch commit messages in parallel
-                let commit_futures: Vec<_> = commits.into_iter().map(|(repo_guid, hash)| {
-                    let org = org.clone();
-                    let project = project.clone();
-                    let tx = tx.clone();
-                    async move {
-                        let output = tokio::process::Command::new("az")
-                            .args(["devops", "invoke"])
-                            .args(["--area", "git"])
-                            .args(["--resource", "commits"])
-                            .args(["--route-parameters", &format!("project={project}"), &format!("repositoryId={repo_guid}"), &format!("commitId={hash}")])
-                            .args(["--org", &org])
-                            .args(["--output", "json"])
-                            .output()
-                            .await;
+                let commit_futures: Vec<_> = commits
+                    .into_iter()
+                    .map(|(repo_guid, hash)| {
+                        let org = org.clone();
+                        let project = project.clone();
+                        let tx = tx.clone();
+                        async move {
+                            let output = tokio::process::Command::new("az")
+                                .args(["devops", "invoke"])
+                                .args(["--area", "git"])
+                                .args(["--resource", "commits"])
+                                .args([
+                                    "--route-parameters",
+                                    &format!("project={project}"),
+                                    &format!("repositoryId={repo_guid}"),
+                                    &format!("commitId={hash}"),
+                                ])
+                                .args(["--org", &org])
+                                .args(["--output", "json"])
+                                .output()
+                                .await;
 
-                        if let Ok(o) = output {
-                            if o.status.success() {
-                                if let Ok(json) = serde_json::from_slice::<serde_json::Value>(&o.stdout) {
-                                    if let Some(comment) = json.get("comment").and_then(|c| c.as_str()) {
-                                        let title = comment.lines().next().unwrap_or(comment);
-                                        let key = format!("commit:{hash}");
-                                        let _ = tx.send((key, title.to_string())).await;
+                            if let Ok(o) = output {
+                                if o.status.success() {
+                                    if let Ok(json) =
+                                        serde_json::from_slice::<serde_json::Value>(&o.stdout)
+                                    {
+                                        if let Some(comment) =
+                                            json.get("comment").and_then(|c| c.as_str())
+                                        {
+                                            let title = comment.lines().next().unwrap_or(comment);
+                                            let key = format!("commit:{hash}");
+                                            let _ = tx.send((key, title.to_string())).await;
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 // Run all requests in parallel
                 futures::future::join_all(pr_futures).await;
@@ -691,7 +1000,9 @@ impl App {
         self.relations_loader_active = true;
 
         // Clone what we need for the background task
-        let client_info = self.current_project().map(|p| (p.organization.clone(), p.project.clone()));
+        let client_info = self
+            .current_project()
+            .map(|p| (p.organization.clone(), p.project.clone()));
 
         if let Some((org, _project)) = client_info {
             tokio::spawn(async move {
@@ -769,12 +1080,19 @@ impl App {
             self.extract_users_from_work_items();
 
             // Find the sprint that matches cached sprint_path
-            self.selected_sprint_idx = self.sprints.iter()
+            self.selected_sprint_idx = self
+                .sprints
+                .iter()
                 .position(|s| s.path == sprint_path)
-                .or_else(|| self.sprints.iter().position(|s| s.attributes.time_frame.as_deref() == Some("current")))
+                .or_else(|| {
+                    self.sprints
+                        .iter()
+                        .position(|s| s.attributes.time_frame.as_deref() == Some("current"))
+                })
                 .unwrap_or(0);
 
-            self.sprint_list_state.select(Some(self.selected_sprint_idx));
+            self.sprint_list_state
+                .select(Some(self.selected_sprint_idx));
             self.rebuild_visible_items();
             if !self.visible_items.is_empty() {
                 self.work_item_list_state.select(Some(0));
@@ -791,7 +1109,8 @@ impl App {
             Some(p) => p.name.clone(),
             None => return,
         };
-        let sprint_path = self.selected_sprint()
+        let sprint_path = self
+            .selected_sprint()
             .map(|s| s.path.as_str())
             .unwrap_or("");
 
@@ -839,7 +1158,9 @@ impl App {
     // CI/CD data loading (kept for potential direct API use, currently using background loaders)
     #[allow(dead_code)]
     pub async fn load_pipelines(&mut self) -> Result<()> {
-        let client = self.client().ok_or_else(|| anyhow::anyhow!("No project configured"))?;
+        let client = self
+            .client()
+            .ok_or_else(|| anyhow::anyhow!("No project configured"))?;
         self.pipelines = client.list_pipelines().await?;
 
         if !self.pipelines.is_empty() && self.pipeline_list_state.selected().is_none() {
@@ -850,7 +1171,9 @@ impl App {
 
     #[allow(dead_code)]
     pub async fn load_release_definitions(&mut self) -> Result<()> {
-        let client = self.client().ok_or_else(|| anyhow::anyhow!("No project configured"))?;
+        let client = self
+            .client()
+            .ok_or_else(|| anyhow::anyhow!("No project configured"))?;
         self.releases = client.list_release_definitions().await?;
 
         if !self.releases.is_empty() && self.release_list_state.selected().is_none() {
@@ -861,14 +1184,18 @@ impl App {
 
     #[allow(dead_code)]
     pub async fn load_pipeline_runs(&mut self, pipeline_id: i32) -> Result<()> {
-        let client = self.client().ok_or_else(|| anyhow::anyhow!("No project configured"))?;
+        let client = self
+            .client()
+            .ok_or_else(|| anyhow::anyhow!("No project configured"))?;
         self.pipeline_runs = client.list_pipeline_runs(pipeline_id).await?;
         Ok(())
     }
 
     #[allow(dead_code)]
     pub async fn load_releases(&mut self, definition_id: Option<i32>) -> Result<()> {
-        let client = self.client().ok_or_else(|| anyhow::anyhow!("No project configured"))?;
+        let client = self
+            .client()
+            .ok_or_else(|| anyhow::anyhow!("No project configured"))?;
         self.release_list = client.list_releases(definition_id).await?;
         Ok(())
     }
@@ -984,7 +1311,8 @@ impl App {
             if let Ok(o) = output {
                 if o.status.success() {
                     if let Ok(defs) = serde_json::from_slice::<Vec<ReleaseDefinition>>(&o.stdout) {
-                        let filtered: Vec<_> = defs.into_iter()
+                        let filtered: Vec<_> = defs
+                            .into_iter()
                             .filter(|d| !d.is_deleted && !d.is_disabled)
                             .collect();
                         releases_result = Some(filtered.clone());
@@ -995,7 +1323,8 @@ impl App {
 
             // Save to cache after loading (preserve pinned items)
             if let (Some(pipelines), Some(releases)) = (pipelines_result, releases_result) {
-                let entry = CICDCacheEntry::new(pipelines, releases, pinned_pipelines, pinned_releases);
+                let entry =
+                    CICDCacheEntry::new(pipelines, releases, pinned_pipelines, pinned_releases);
                 let _ = cache::save_cicd(&project_name, &entry);
             }
         });
@@ -1055,7 +1384,8 @@ impl App {
 
                     // Check if we need to select a specific release (e.g., after creating one)
                     if let Some(target_id) = self.pending_select_release_id.take() {
-                        if let Some(idx) = self.release_list.iter().position(|r| r.id == target_id) {
+                        if let Some(idx) = self.release_list.iter().position(|r| r.id == target_id)
+                        {
                             self.selected_release_item_idx = idx;
                             // Auto-drill into stages for newly created release
                             self.release_drill_down = ReleaseDrillDown::Stages;
@@ -1077,10 +1407,11 @@ impl App {
                     let was_empty = self.release_stages.is_empty();
                     self.release_stages = stages;
                     // Only reset selection if this is first load or current selection is out of bounds
-                    if !self.release_stages.is_empty() {
-                        if was_empty || self.selected_release_stage_idx >= self.release_stages.len() {
-                            self.selected_release_stage_idx = 0;
-                        }
+                    if !self.release_stages.is_empty()
+                        && (was_empty
+                            || self.selected_release_stage_idx >= self.release_stages.len())
+                    {
+                        self.selected_release_stage_idx = 0;
                     }
                 }
                 CICDLoadResult::ReleaseTasks(tasks) => {
@@ -1097,7 +1428,11 @@ impl App {
                     self.timeline_records = records;
                     self.selected_task_idx = 0;
                 }
-                CICDLoadResult::TimelineDelta { build_id, records, change_id } => {
+                CICDLoadResult::TimelineDelta {
+                    build_id,
+                    records,
+                    change_id,
+                } => {
                     // Update change_id for next delta poll
                     if self.live_preview_build_id == Some(build_id) {
                         self.live_preview_change_id = change_id;
@@ -1108,7 +1443,9 @@ impl App {
                         self.timeline_records = records;
 
                         // Check if build completed - stop live preview
-                        let all_complete = self.timeline_records.iter()
+                        let all_complete = self
+                            .timeline_records
+                            .iter()
                             .filter(|r| r.record_type.as_deref() == Some("Stage"))
                             .all(|r| r.state.as_deref() == Some("completed"));
 
@@ -1129,10 +1466,15 @@ impl App {
                 CICDLoadResult::ReleaseDefinitionDetail(detail) => {
                     // Update dialog with stage information
                     if let Some(dialog) = &mut self.release_trigger_dialog {
-                        dialog.stages = detail.environments.iter()
+                        dialog.stages = detail
+                            .environments
+                            .iter()
                             .map(|env| StageSelection {
                                 id: env.id,
-                                name: env.name.clone().unwrap_or_else(|| format!("Stage {}", env.id)),
+                                name: env
+                                    .name
+                                    .clone()
+                                    .unwrap_or_else(|| format!("Stage {}", env.id)),
                                 enabled: true,
                             })
                             .collect();
@@ -1142,7 +1484,11 @@ impl App {
                 CICDLoadResult::ReleaseCreated(release) => {
                     let release_name = release.name.clone();
                     let release_id = release.id;
-                    let def_id = release.release_definition.as_ref().map(|d| d.id).unwrap_or(0);
+                    let def_id = release
+                        .release_definition
+                        .as_ref()
+                        .map(|d| d.id)
+                        .unwrap_or(0);
 
                     self.set_status(format!("Release {} created", &release_name));
 
@@ -1161,15 +1507,19 @@ impl App {
                     // Enable auto-refresh to see updates
                     self.start_release_auto_refresh(release_id);
                 }
-                CICDLoadResult::ApprovalUpdated { approval_id: _, release_id, status } => {
-                    self.set_status(format!("Approval {} - refreshing...", status));
+                CICDLoadResult::ApprovalUpdated {
+                    approval_id: _,
+                    release_id,
+                    status,
+                } => {
+                    self.set_status(format!("Approval {status} - refreshing..."));
                     // Reset loading state so we can start a new loader
                     self.cicd_loading = false;
                     // Always refresh release stages after approval action
                     self.start_release_stages_loader(release_id);
                 }
                 CICDLoadResult::PipelineRunCanceled(run_id) => {
-                    self.set_status(format!("Pipeline run #{} canceled", run_id));
+                    self.set_status(format!("Pipeline run #{run_id} canceled"));
                     // Reset loading state so we can start a new loader
                     self.cicd_loading = false;
                     // Refresh runs list
@@ -1179,7 +1529,7 @@ impl App {
                 }
                 CICDLoadResult::PipelineRunRetriggered(run) => {
                     let build_num = run.build_number.as_deref().unwrap_or("?");
-                    self.set_status(format!("New run #{} started", build_num));
+                    self.set_status(format!("New run #{build_num} started"));
                     // Reset loading state so we can start a new loader
                     self.cicd_loading = false;
                     // Refresh runs list
@@ -1188,7 +1538,7 @@ impl App {
                     }
                 }
                 CICDLoadResult::ReleaseCanceled(release_id) => {
-                    self.set_status(format!("Release {} abandoned", release_id));
+                    self.set_status(format!("Release {release_id} abandoned"));
                     // Reset loading state so we can start a new loader
                     self.cicd_loading = false;
                     // Refresh releases list
@@ -1196,15 +1546,21 @@ impl App {
                         self.start_releases_loader(def_id);
                     }
                 }
-                CICDLoadResult::ReleaseEnvironmentCanceled { release_id, environment_name } => {
-                    self.set_status(format!("Stage '{}' canceled", environment_name));
+                CICDLoadResult::ReleaseEnvironmentCanceled {
+                    release_id,
+                    environment_name,
+                } => {
+                    self.set_status(format!("Stage '{environment_name}' canceled"));
                     // Reset loading state so we can start a new loader
                     self.cicd_loading = false;
                     // Refresh stages
                     self.start_release_stages_loader(release_id);
                 }
-                CICDLoadResult::ReleaseEnvironmentRedeployed { release_id, environment_name } => {
-                    self.set_status(format!("Stage '{}' redeploying", environment_name));
+                CICDLoadResult::ReleaseEnvironmentRedeployed {
+                    release_id,
+                    environment_name,
+                } => {
+                    self.set_status(format!("Stage '{environment_name}' redeploying"));
                     // Reset loading state so we can start a new loader
                     self.cicd_loading = false;
                     // Refresh stages
@@ -1276,7 +1632,8 @@ impl App {
             if let Ok(o) = output {
                 if o.status.success() {
                     if let Ok(defs) = serde_json::from_slice::<Vec<ReleaseDefinition>>(&o.stdout) {
-                        let filtered: Vec<_> = defs.into_iter()
+                        let filtered: Vec<_> = defs
+                            .into_iter()
                             .filter(|d| !d.is_deleted && !d.is_disabled)
                             .collect();
                         releases_result = Some(filtered.clone());
@@ -1287,7 +1644,8 @@ impl App {
 
             // Save to cache after loading (preserve pinned items)
             if let (Some(pipelines), Some(releases)) = (pipelines_result, releases_result) {
-                let entry = CICDCacheEntry::new(pipelines, releases, pinned_pipelines, pinned_releases);
+                let entry =
+                    CICDCacheEntry::new(pipelines, releases, pinned_pipelines, pinned_releases);
                 let _ = cache::save_cicd(&project_name, &entry);
             }
         });
@@ -1309,7 +1667,12 @@ impl App {
     }
 
     /// Start background loader for pipeline runs with optional limit
-    fn start_pipeline_runs_loader_impl(&mut self, pipeline_id: i32, limit: Option<u32>, force: bool) {
+    fn start_pipeline_runs_loader_impl(
+        &mut self,
+        pipeline_id: i32,
+        limit: Option<u32>,
+        force: bool,
+    ) {
         let (org, proj, proj_name) = match self.current_project() {
             Some(p) => (p.organization.clone(), p.project.clone(), p.name.clone()),
             None => return,
@@ -1321,7 +1684,9 @@ impl App {
 
         // Stale-while-revalidate: use cache immediately, refresh in background if stale
         let needs_fetch = if !force && limit.is_some() {
-            if let Some((cached, needs_refresh)) = cache::load_pipeline_runs(&proj_name, pipeline_id) {
+            if let Some((cached, needs_refresh)) =
+                cache::load_pipeline_runs(&proj_name, pipeline_id)
+            {
                 self.pipeline_runs = cached.runs;
                 self.cicd_loading = false;
                 needs_refresh // Only fetch if stale
@@ -1359,7 +1724,8 @@ impl App {
                 if o.status.success() {
                     if let Ok(runs) = serde_json::from_slice::<Vec<PipelineRun>>(&o.stdout) {
                         // Save to cache
-                        let cache_entry = cache::PipelineRunsCacheEntry::new(pipeline_id, runs.clone());
+                        let cache_entry =
+                            cache::PipelineRunsCacheEntry::new(pipeline_id, runs.clone());
                         let _ = cache::save_pipeline_runs(&proj_name, &cache_entry);
                         let _ = tx.send(CICDLoadResult::PipelineRuns(runs)).await;
                     }
@@ -1422,7 +1788,8 @@ impl App {
                 if o.status.success() {
                     if let Ok(releases) = serde_json::from_slice::<Vec<Release>>(&o.stdout) {
                         // Save to cache
-                        let cache_entry = cache::ReleasesCacheEntry::new(definition_id, releases.clone());
+                        let cache_entry =
+                            cache::ReleasesCacheEntry::new(definition_id, releases.clone());
                         let _ = cache::save_releases(&proj_name, &cache_entry);
                         let _ = tx.send(CICDLoadResult::Releases(releases)).await;
                     }
@@ -1432,6 +1799,7 @@ impl App {
     }
 
     /// Start background loader for release detail (to get environments/stages)
+    #[allow(dead_code)]
     pub fn start_release_detail_loader(&mut self, release_idx: usize, release_id: i32) {
         let (org, proj, _proj_name) = match self.current_project() {
             Some(p) => (p.organization.clone(), p.project.clone(), p.name.clone()),
@@ -1455,7 +1823,9 @@ impl App {
             if let Ok(o) = output {
                 if o.status.success() {
                     if let Ok(release) = serde_json::from_slice::<Release>(&o.stdout) {
-                        let _ = tx.send(CICDLoadResult::ReleaseDetail(release_idx, release)).await;
+                        let _ = tx
+                            .send(CICDLoadResult::ReleaseDetail(release_idx, release))
+                            .await;
                     }
                 }
             }
@@ -1547,7 +1917,9 @@ impl App {
 
             if let Ok(token_out) = token_output {
                 if token_out.status.success() {
-                    let token = String::from_utf8_lossy(&token_out.stdout).trim().to_string();
+                    let token = String::from_utf8_lossy(&token_out.stdout)
+                        .trim()
+                        .to_string();
 
                     // Fetch log using curl
                     let output = tokio::process::Command::new("curl")
@@ -1559,7 +1931,8 @@ impl App {
                     if let Ok(o) = output {
                         if o.status.success() {
                             let log_content = String::from_utf8_lossy(&o.stdout);
-                            let lines: Vec<String> = log_content.lines().map(|l| l.to_string()).collect();
+                            let lines: Vec<String> =
+                                log_content.lines().map(|l| l.to_string()).collect();
                             let _ = tx.send(CICDLoadResult::ReleaseTaskLog(lines)).await;
                         }
                     }
@@ -1612,7 +1985,11 @@ impl App {
                 .args(["devops", "invoke"])
                 .args(["--area", "build"])
                 .args(["--resource", "timeline"])
-                .args(["--route-parameters", &format!("project={proj}"), &format!("buildId={build_id}")])
+                .args([
+                    "--route-parameters",
+                    &format!("project={proj}"),
+                    &format!("buildId={build_id}"),
+                ])
                 .args(["--org", &org])
                 .args(["--output", "json"])
                 .output()
@@ -1620,9 +1997,12 @@ impl App {
 
             if let Ok(o) = output {
                 if o.status.success() {
-                    if let Ok(resp) = serde_json::from_slice::<crate::azure::TimelineResponse>(&o.stdout) {
+                    if let Ok(resp) =
+                        serde_json::from_slice::<crate::azure::TimelineResponse>(&o.stdout)
+                    {
                         // Save to cache
-                        let cache_entry = cache::TimelineCacheEntry::new(build_id, resp.records.clone());
+                        let cache_entry =
+                            cache::TimelineCacheEntry::new(build_id, resp.records.clone());
                         let _ = cache::save_timeline(&proj_name, &cache_entry);
                         let _ = tx.send(CICDLoadResult::Timeline(resp.records)).await;
                     }
@@ -1637,6 +2017,7 @@ impl App {
     }
 
     /// Force refresh build log (bypass cache)
+    #[allow(dead_code)]
     pub fn force_refresh_log(&mut self, build_id: i32, log_id: i32) {
         self.start_log_loader_impl(build_id, log_id, true);
     }
@@ -1652,7 +2033,9 @@ impl App {
 
         // Stale-while-revalidate: use cache immediately, refresh in background if stale
         let needs_fetch = if !force {
-            if let Some((cached, needs_refresh)) = cache::load_build_log(&proj_name, build_id, log_id) {
+            if let Some((cached, needs_refresh)) =
+                cache::load_build_log(&proj_name, build_id, log_id)
+            {
                 self.build_log_lines = cached.lines;
                 self.cicd_loading = false;
                 needs_refresh // Only fetch if stale
@@ -1676,7 +2059,12 @@ impl App {
                 .args(["devops", "invoke"])
                 .args(["--area", "build"])
                 .args(["--resource", "logs"])
-                .args(["--route-parameters", &format!("project={proj}"), &format!("buildId={build_id}"), &format!("logId={log_id}")])
+                .args([
+                    "--route-parameters",
+                    &format!("project={proj}"),
+                    &format!("buildId={build_id}"),
+                    &format!("logId={log_id}"),
+                ])
                 .args(["--org", &org])
                 .args(["--output", "json"])
                 .output()
@@ -1684,9 +2072,12 @@ impl App {
 
             if let Ok(o) = output {
                 if o.status.success() {
-                    if let Ok(resp) = serde_json::from_slice::<crate::azure::BuildLogResponse>(&o.stdout) {
+                    if let Ok(resp) =
+                        serde_json::from_slice::<crate::azure::BuildLogResponse>(&o.stdout)
+                    {
                         // Save to cache
-                        let cache_entry = cache::BuildLogCacheEntry::new(build_id, log_id, resp.value.clone());
+                        let cache_entry =
+                            cache::BuildLogCacheEntry::new(build_id, log_id, resp.value.clone());
                         let _ = cache::save_build_log(&proj_name, &cache_entry);
                         let _ = tx.send(CICDLoadResult::BuildLog(resp.value)).await;
                     }
@@ -1750,28 +2141,33 @@ impl App {
             cmd.args(["devops", "invoke"])
                 .args(["--area", "build"])
                 .args(["--resource", "timeline"])
-                .args(["--route-parameters",
-                       &format!("project={}", proj),
-                       &format!("buildId={}", build_id)]);
+                .args([
+                    "--route-parameters",
+                    &format!("project={proj}"),
+                    &format!("buildId={build_id}"),
+                ]);
 
             // Add changeId for delta polling - returns empty if no changes
             if let Some(change_id) = change_id {
-                cmd.args(["--query-parameters", &format!("changeId={}", change_id)]);
+                cmd.args(["--query-parameters", &format!("changeId={change_id}")]);
             }
 
-            cmd.args(["--org", &org])
-                .args(["--output", "json"]);
+            cmd.args(["--org", &org]).args(["--output", "json"]);
 
             if let Ok(output) = cmd.output().await {
                 if output.status.success() {
-                    if let Ok(response) = serde_json::from_slice::<crate::azure::TimelineResponse>(&output.stdout) {
+                    if let Ok(response) =
+                        serde_json::from_slice::<crate::azure::TimelineResponse>(&output.stdout)
+                    {
                         // If no records returned and we had a changeId, nothing changed
                         if !response.records.is_empty() || change_id.is_none() {
-                            let _ = tx.send(CICDLoadResult::TimelineDelta {
-                                build_id,
-                                records: response.records,
-                                change_id: response.change_id,
-                            }).await;
+                            let _ = tx
+                                .send(CICDLoadResult::TimelineDelta {
+                                    build_id,
+                                    records: response.records,
+                                    change_id: response.change_id,
+                                })
+                                .await;
                         }
                     }
                 }
@@ -1814,6 +2210,7 @@ impl App {
     }
 
     /// Start background loader for pending approvals
+    #[allow(dead_code)]
     pub fn start_approvals_loader(&mut self) {
         if self.approvals_loading {
             return;
@@ -1842,7 +2239,9 @@ impl App {
 
             if let Ok(o) = output {
                 if o.status.success() {
-                    if let Ok(resp) = serde_json::from_slice::<crate::azure::ApprovalsResponse>(&o.stdout) {
+                    if let Ok(resp) =
+                        serde_json::from_slice::<crate::azure::ApprovalsResponse>(&o.stdout)
+                    {
                         let _ = tx.send(CICDLoadResult::PendingApprovals(resp.value)).await;
                     }
                 }
@@ -1853,7 +2252,10 @@ impl App {
     /// Open release trigger dialog
     pub fn open_release_trigger_dialog(&mut self, definition_id: i32, definition_name: String) {
         // Set dialog with loading state
-        self.release_trigger_dialog = Some(ReleaseTriggerDialog::new(definition_id, definition_name.clone()));
+        self.release_trigger_dialog = Some(ReleaseTriggerDialog::new(
+            definition_id,
+            definition_name.clone(),
+        ));
         self.input_mode = InputMode::ReleaseTriggerDialog;
 
         let (org, proj) = match self.current_project() {
@@ -1869,7 +2271,11 @@ impl App {
                 .args(["devops", "invoke"])
                 .args(["--area", "release"])
                 .args(["--resource", "definitions"])
-                .args(["--route-parameters", &format!("project={proj}"), &format!("definitionId={definition_id}")])
+                .args([
+                    "--route-parameters",
+                    &format!("project={proj}"),
+                    &format!("definitionId={definition_id}"),
+                ])
                 .args(["--org", &org])
                 .args(["--output", "json"])
                 .output()
@@ -1878,14 +2284,20 @@ impl App {
             match output {
                 Ok(o) => {
                     if o.status.success() {
-                        match serde_json::from_slice::<crate::azure::ReleaseDefinitionDetail>(&o.stdout) {
+                        match serde_json::from_slice::<crate::azure::ReleaseDefinitionDetail>(
+                            &o.stdout,
+                        ) {
                             Ok(detail) => {
-                                let _ = tx.send(CICDLoadResult::ReleaseDefinitionDetail(detail)).await;
+                                let _ = tx
+                                    .send(CICDLoadResult::ReleaseDefinitionDetail(detail))
+                                    .await;
                             }
                             Err(e) => {
                                 // Try parsing as wrapped response (some API versions wrap in "value")
                                 #[derive(serde::Deserialize)]
-                                struct Wrapper { environments: Vec<crate::azure::ReleaseDefinitionEnvironment> }
+                                struct Wrapper {
+                                    environments: Vec<crate::azure::ReleaseDefinitionEnvironment>,
+                                }
                                 if let Ok(w) = serde_json::from_slice::<Wrapper>(&o.stdout) {
                                     let detail = crate::azure::ReleaseDefinitionDetail {
                                         id: definition_id,
@@ -1893,7 +2305,9 @@ impl App {
                                         environments: w.environments,
                                         artifacts: vec![],
                                     };
-                                    let _ = tx.send(CICDLoadResult::ReleaseDefinitionDetail(detail)).await;
+                                    let _ = tx
+                                        .send(CICDLoadResult::ReleaseDefinitionDetail(detail))
+                                        .await;
                                 } else {
                                     eprintln!("Failed to parse release definition: {e}");
                                     eprintln!("Response: {}", String::from_utf8_lossy(&o.stdout));
@@ -1911,7 +2325,9 @@ impl App {
 
     /// Get tasks from timeline (filtered to type=Task only, sorted by order)
     pub fn get_timeline_tasks(&self) -> Vec<&TimelineRecord> {
-        let mut tasks: Vec<_> = self.timeline_records.iter()
+        let mut tasks: Vec<_> = self
+            .timeline_records
+            .iter()
             .filter(|r| r.record_type.as_deref() == Some("Task"))
             .collect();
         tasks.sort_by_key(|r| r.order.unwrap_or(999));
@@ -1956,16 +2372,25 @@ impl App {
                             }
                             Err(e) => {
                                 // Send error as status
-                                let _ = tx.send(CICDLoadResult::Error(format!("Parse error: {e}"))).await;
+                                let _ = tx
+                                    .send(CICDLoadResult::Error(format!("Parse error: {e}")))
+                                    .await;
                             }
                         }
                     } else {
                         let stderr = String::from_utf8_lossy(&o.stderr);
-                        let _ = tx.send(CICDLoadResult::Error(format!("Release failed: {}", stderr.lines().next().unwrap_or(&stderr)))).await;
+                        let _ = tx
+                            .send(CICDLoadResult::Error(format!(
+                                "Release failed: {}",
+                                stderr.lines().next().unwrap_or(&stderr)
+                            )))
+                            .await;
                     }
                 }
                 Err(e) => {
-                    let _ = tx.send(CICDLoadResult::Error(format!("Command failed: {e}"))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!("Command failed: {e}")))
+                        .await;
                 }
             }
         });
@@ -1981,7 +2406,7 @@ impl App {
             }
         };
 
-        self.set_status(format!("Looking for approval for {}...", stage_name));
+        self.set_status(format!("Looking for approval for {stage_name}..."));
 
         let (tx, rx) = mpsc::channel(10);
         self.cicd_rx = Some(rx);
@@ -2005,29 +2430,44 @@ impl App {
                     match serde_json::from_slice::<crate::azure::ApprovalsResponse>(&o.stdout) {
                         Ok(resp) => resp,
                         Err(e) => {
-                            let _ = tx.send(CICDLoadResult::Error(format!("Parse error: {e}"))).await;
+                            let _ = tx
+                                .send(CICDLoadResult::Error(format!("Parse error: {e}")))
+                                .await;
                             return;
                         }
                     }
                 }
                 Ok(o) => {
-                    let _ = tx.send(CICDLoadResult::Error(format!("API error: {}", String::from_utf8_lossy(&o.stderr)))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!(
+                            "API error: {}",
+                            String::from_utf8_lossy(&o.stderr)
+                        )))
+                        .await;
                     return;
                 }
                 Err(e) => {
-                    let _ = tx.send(CICDLoadResult::Error(format!("Command failed: {e}"))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!("Command failed: {e}")))
+                        .await;
                     return;
                 }
             };
 
             // Step 2: Find approval for this environment
-            let approval = approvals_response.value.iter()
+            let approval = approvals_response
+                .value
+                .iter()
                 .find(|a| a.release_environment.as_ref().map(|e| e.id) == Some(env_id));
 
             let approval_id = match approval {
                 Some(a) => a.id,
                 None => {
-                    let _ = tx.send(CICDLoadResult::Error(format!("No pending approval for {}", stage_name))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!(
+                            "No pending approval for {stage_name}"
+                        )))
+                        .await;
                     return;
                 }
             };
@@ -2040,9 +2480,13 @@ impl App {
             }]);
             let body_str = body.to_string();
 
-            let temp_path = std::env::temp_dir().join(format!("approval_{}.json", approval_id));
+            let temp_path = std::env::temp_dir().join(format!("approval_{approval_id}.json"));
             if let Err(e) = tokio::fs::write(&temp_path, &body_str).await {
-                let _ = tx.send(CICDLoadResult::Error(format!("Failed to write temp file: {e}"))).await;
+                let _ = tx
+                    .send(CICDLoadResult::Error(format!(
+                        "Failed to write temp file: {e}"
+                    )))
+                    .await;
                 return;
             }
 
@@ -2064,19 +2508,30 @@ impl App {
             match approve_output {
                 Ok(o) if o.status.success() => {
                     // Get release_id from the approval response if possible
-                    let release_id = approval.and_then(|a| a.release.as_ref().map(|r| r.id)).unwrap_or(0);
-                    let _ = tx.send(CICDLoadResult::ApprovalUpdated {
-                        approval_id,
-                        release_id,
-                        status: "approved".to_string(),
-                    }).await;
+                    let release_id = approval
+                        .and_then(|a| a.release.as_ref().map(|r| r.id))
+                        .unwrap_or(0);
+                    let _ = tx
+                        .send(CICDLoadResult::ApprovalUpdated {
+                            approval_id,
+                            release_id,
+                            status: "approved".to_string(),
+                        })
+                        .await;
                 }
                 Ok(o) => {
                     let stderr = String::from_utf8_lossy(&o.stderr);
-                    let _ = tx.send(CICDLoadResult::Error(format!("Approval failed: {}", stderr.lines().next().unwrap_or(&stderr)))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!(
+                            "Approval failed: {}",
+                            stderr.lines().next().unwrap_or(&stderr)
+                        )))
+                        .await;
                 }
                 Err(e) => {
-                    let _ = tx.send(CICDLoadResult::Error(format!("Command failed: {e}"))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!("Command failed: {e}")))
+                        .await;
                 }
             }
         });
@@ -2085,9 +2540,13 @@ impl App {
     /// Approve all pending stages for the current release
     pub fn approve_all_pending_stages(&mut self) {
         // Collect all stages with pending approvals
-        let pending_env_ids: Vec<i32> = self.release_stages.iter()
+        let pending_env_ids: Vec<i32> = self
+            .release_stages
+            .iter()
             .filter(|stage| {
-                stage.pre_deploy_approvals.iter()
+                stage
+                    .pre_deploy_approvals
+                    .iter()
                     .any(|a| a.status.as_deref() == Some("pending"))
             })
             .map(|stage| stage.id)
@@ -2107,12 +2566,14 @@ impl App {
         };
 
         // Get release_id for refresh after approval
-        let release_id = self.release_list.get(self.selected_release_item_idx)
+        let release_id = self
+            .release_list
+            .get(self.selected_release_item_idx)
             .map(|r| r.id)
             .unwrap_or(0);
 
         let count = pending_env_ids.len();
-        self.set_status(format!("Approving {} stage(s)...", count));
+        self.set_status(format!("Approving {count} stage(s)..."));
 
         let (tx, rx) = mpsc::channel(10);
         self.cicd_rx = Some(rx);
@@ -2135,48 +2596,71 @@ impl App {
                     match serde_json::from_slice::<crate::azure::ApprovalsResponse>(&o.stdout) {
                         Ok(resp) => resp,
                         Err(e) => {
-                            let _ = tx.send(CICDLoadResult::Error(format!("Parse error: {e}"))).await;
+                            let _ = tx
+                                .send(CICDLoadResult::Error(format!("Parse error: {e}")))
+                                .await;
                             return;
                         }
                     }
                 }
                 Ok(o) => {
-                    let _ = tx.send(CICDLoadResult::Error(format!("API error: {}", String::from_utf8_lossy(&o.stderr)))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!(
+                            "API error: {}",
+                            String::from_utf8_lossy(&o.stderr)
+                        )))
+                        .await;
                     return;
                 }
                 Err(e) => {
-                    let _ = tx.send(CICDLoadResult::Error(format!("Command failed: {e}"))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!("Command failed: {e}")))
+                        .await;
                     return;
                 }
             };
 
             // Step 2: Find approvals for our environments
-            let approvals_to_approve: Vec<_> = approvals_response.value.iter()
+            let approvals_to_approve: Vec<_> = approvals_response
+                .value
+                .iter()
                 .filter(|a| {
-                    a.release_environment.as_ref()
+                    a.release_environment
+                        .as_ref()
                         .map(|e| pending_env_ids.contains(&e.id))
                         .unwrap_or(false)
                 })
                 .collect();
 
             if approvals_to_approve.is_empty() {
-                let _ = tx.send(CICDLoadResult::Error("No matching approvals found".to_string())).await;
+                let _ = tx
+                    .send(CICDLoadResult::Error(
+                        "No matching approvals found".to_string(),
+                    ))
+                    .await;
                 return;
             }
 
             // Step 3: Approve all at once
-            let body: Vec<_> = approvals_to_approve.iter()
-                .map(|a| serde_json::json!({
-                    "id": a.id,
-                    "status": "approved",
-                    "comments": "Approved via lazyops"
-                }))
+            let body: Vec<_> = approvals_to_approve
+                .iter()
+                .map(|a| {
+                    serde_json::json!({
+                        "id": a.id,
+                        "status": "approved",
+                        "comments": "Approved via lazyops"
+                    })
+                })
                 .collect();
             let body_str = serde_json::Value::Array(body).to_string();
 
             let temp_path = std::env::temp_dir().join("approval_all.json");
             if let Err(e) = tokio::fs::write(&temp_path, &body_str).await {
-                let _ = tx.send(CICDLoadResult::Error(format!("Failed to write temp file: {e}"))).await;
+                let _ = tx
+                    .send(CICDLoadResult::Error(format!(
+                        "Failed to write temp file: {e}"
+                    )))
+                    .await;
                 return;
             }
 
@@ -2197,18 +2681,27 @@ impl App {
 
             match approve_output {
                 Ok(o) if o.status.success() => {
-                    let _ = tx.send(CICDLoadResult::ApprovalUpdated {
-                        approval_id: 0,  // Multiple approvals
-                        release_id,
-                        status: format!("approved {} stage(s)", approvals_to_approve.len()),
-                    }).await;
+                    let _ = tx
+                        .send(CICDLoadResult::ApprovalUpdated {
+                            approval_id: 0, // Multiple approvals
+                            release_id,
+                            status: format!("approved {} stage(s)", approvals_to_approve.len()),
+                        })
+                        .await;
                 }
                 Ok(o) => {
                     let stderr = String::from_utf8_lossy(&o.stderr);
-                    let _ = tx.send(CICDLoadResult::Error(format!("Approval failed: {}", stderr.lines().next().unwrap_or(&stderr)))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!(
+                            "Approval failed: {}",
+                            stderr.lines().next().unwrap_or(&stderr)
+                        )))
+                        .await;
                 }
                 Err(e) => {
-                    let _ = tx.send(CICDLoadResult::Error(format!("Command failed: {e}"))).await;
+                    let _ = tx
+                        .send(CICDLoadResult::Error(format!("Command failed: {e}")))
+                        .await;
                 }
             }
         });
@@ -2243,9 +2736,9 @@ impl App {
 
     /// Execute a confirmed action (cancel/retrigger)
     pub fn execute_confirmed_action(&mut self, action_type: ConfirmActionType) {
-        let client_info = self.current_project().map(|p| {
-            (p.organization.clone(), p.project.clone())
-        });
+        let client_info = self
+            .current_project()
+            .map(|p| (p.organization.clone(), p.project.clone()));
 
         let Some((org, project)) = client_info else {
             self.set_error("No project configured");
@@ -2265,8 +2758,11 @@ impl App {
         self.cicd_loading = true;
 
         match action_type {
-            ConfirmActionType::CancelPipelineRun { run_id, build_number } => {
-                self.set_status(format!("Canceling build #{}...", build_number));
+            ConfirmActionType::CancelPipelineRun {
+                run_id,
+                build_number,
+            } => {
+                self.set_status(format!("Canceling build #{build_number}..."));
                 tokio::spawn(async move {
                     let output = tokio::process::Command::new("az")
                         .args(["pipelines", "build", "update"])
@@ -2280,15 +2776,21 @@ impl App {
 
                     let result = match output {
                         Ok(o) if o.status.success() => CICDLoadResult::PipelineRunCanceled(run_id),
-                        Ok(o) => CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string()),
+                        Ok(o) => {
+                            CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string())
+                        }
                         Err(e) => CICDLoadResult::Error(e.to_string()),
                     };
                     let _ = tx.send(result).await;
                 });
             }
 
-            ConfirmActionType::RetriggerPipelineRun { pipeline_id, branch, build_number } => {
-                self.set_status(format!("Retriggering #{}...", build_number));
+            ConfirmActionType::RetriggerPipelineRun {
+                pipeline_id,
+                branch,
+                build_number,
+            } => {
+                self.set_status(format!("Retriggering #{build_number}..."));
                 tokio::spawn(async move {
                     let output = tokio::process::Command::new("az")
                         .args(["pipelines", "run"])
@@ -2301,24 +2803,28 @@ impl App {
                         .await;
 
                     let result = match output {
-                        Ok(o) if o.status.success() => {
-                            match serde_json::from_slice(&o.stdout) {
-                                Ok(run) => CICDLoadResult::PipelineRunRetriggered(run),
-                                Err(e) => CICDLoadResult::Error(format!("Parse error: {}", e)),
-                            }
+                        Ok(o) if o.status.success() => match serde_json::from_slice(&o.stdout) {
+                            Ok(run) => CICDLoadResult::PipelineRunRetriggered(run),
+                            Err(e) => CICDLoadResult::Error(format!("Parse error: {e}")),
+                        },
+                        Ok(o) => {
+                            CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string())
                         }
-                        Ok(o) => CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string()),
                         Err(e) => CICDLoadResult::Error(e.to_string()),
                     };
                     let _ = tx.send(result).await;
                 });
             }
 
-            ConfirmActionType::CancelRelease { release_id, release_name } => {
-                self.set_status(format!("Abandoning {}...", release_name));
+            ConfirmActionType::CancelRelease {
+                release_id,
+                release_name,
+            } => {
+                self.set_status(format!("Abandoning {release_name}..."));
                 tokio::spawn(async move {
                     let body = serde_json::json!({"status": "abandoned"});
-                    let temp_path = std::env::temp_dir().join(format!("cancel_release_{}.json", release_id));
+                    let temp_path =
+                        std::env::temp_dir().join(format!("cancel_release_{release_id}.json"));
 
                     if let Err(e) = tokio::fs::write(&temp_path, body.to_string()).await {
                         let _ = tx.send(CICDLoadResult::Error(e.to_string())).await;
@@ -2329,7 +2835,11 @@ impl App {
                         .args(["devops", "invoke"])
                         .args(["--area", "release"])
                         .args(["--resource", "releases"])
-                        .args(["--route-parameters", &format!("project={}", project), &format!("releaseId={}", release_id)])
+                        .args([
+                            "--route-parameters",
+                            &format!("project={project}"),
+                            &format!("releaseId={release_id}"),
+                        ])
                         .args(["--api-version", "7.1"])
                         .args(["--http-method", "PATCH"])
                         .args(["--in-file", temp_path.to_str().unwrap()])
@@ -2342,21 +2852,29 @@ impl App {
 
                     let result = match output {
                         Ok(o) if o.status.success() => CICDLoadResult::ReleaseCanceled(release_id),
-                        Ok(o) => CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string()),
+                        Ok(o) => {
+                            CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string())
+                        }
                         Err(e) => CICDLoadResult::Error(e.to_string()),
                     };
                     let _ = tx.send(result).await;
                 });
             }
 
-            ConfirmActionType::CancelReleaseEnvironment { release_id, environment_id, environment_name, .. } => {
-                self.set_status(format!("Canceling {}...", environment_name));
+            ConfirmActionType::CancelReleaseEnvironment {
+                release_id,
+                environment_id,
+                environment_name,
+                ..
+            } => {
+                self.set_status(format!("Canceling {environment_name}..."));
                 tokio::spawn(async move {
                     let body = serde_json::json!({
                         "status": "canceled",
                         "comment": "Canceled from lazyops"
                     });
-                    let temp_path = std::env::temp_dir().join(format!("cancel_env_{}_{}.json", release_id, environment_id));
+                    let temp_path = std::env::temp_dir()
+                        .join(format!("cancel_env_{release_id}_{environment_id}.json"));
 
                     if let Err(e) = tokio::fs::write(&temp_path, body.to_string()).await {
                         let _ = tx.send(CICDLoadResult::Error(e.to_string())).await;
@@ -2367,10 +2885,12 @@ impl App {
                         .args(["devops", "invoke"])
                         .args(["--area", "release"])
                         .args(["--resource", "environments"])
-                        .args(["--route-parameters",
-                               &format!("project={}", project),
-                               &format!("releaseId={}", release_id),
-                               &format!("environmentId={}", environment_id)])
+                        .args([
+                            "--route-parameters",
+                            &format!("project={project}"),
+                            &format!("releaseId={release_id}"),
+                            &format!("environmentId={environment_id}"),
+                        ])
                         .args(["--api-version", "7.1"])
                         .args(["--http-method", "PATCH"])
                         .args(["--in-file", temp_path.to_str().unwrap()])
@@ -2384,23 +2904,31 @@ impl App {
                     let result = match output {
                         Ok(o) if o.status.success() => CICDLoadResult::ReleaseEnvironmentCanceled {
                             release_id,
-                            environment_name
+                            environment_name,
                         },
-                        Ok(o) => CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string()),
+                        Ok(o) => {
+                            CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string())
+                        }
                         Err(e) => CICDLoadResult::Error(e.to_string()),
                     };
                     let _ = tx.send(result).await;
                 });
             }
 
-            ConfirmActionType::RetriggerReleaseEnvironment { release_id, environment_id, environment_name, .. } => {
-                self.set_status(format!("Redeploying {}...", environment_name));
+            ConfirmActionType::RetriggerReleaseEnvironment {
+                release_id,
+                environment_id,
+                environment_name,
+                ..
+            } => {
+                self.set_status(format!("Redeploying {environment_name}..."));
                 tokio::spawn(async move {
                     let body = serde_json::json!({
                         "status": "inProgress",
                         "comment": "Redeployed from lazyops"
                     });
-                    let temp_path = std::env::temp_dir().join(format!("redeploy_env_{}_{}.json", release_id, environment_id));
+                    let temp_path = std::env::temp_dir()
+                        .join(format!("redeploy_env_{release_id}_{environment_id}.json"));
 
                     if let Err(e) = tokio::fs::write(&temp_path, body.to_string()).await {
                         let _ = tx.send(CICDLoadResult::Error(e.to_string())).await;
@@ -2411,10 +2939,12 @@ impl App {
                         .args(["devops", "invoke"])
                         .args(["--area", "release"])
                         .args(["--resource", "environments"])
-                        .args(["--route-parameters",
-                               &format!("project={}", project),
-                               &format!("releaseId={}", release_id),
-                               &format!("environmentId={}", environment_id)])
+                        .args([
+                            "--route-parameters",
+                            &format!("project={project}"),
+                            &format!("releaseId={release_id}"),
+                            &format!("environmentId={environment_id}"),
+                        ])
                         .args(["--api-version", "7.1"])
                         .args(["--http-method", "PATCH"])
                         .args(["--in-file", temp_path.to_str().unwrap()])
@@ -2426,19 +2956,27 @@ impl App {
                     let _ = tokio::fs::remove_file(&temp_path).await;
 
                     let result = match output {
-                        Ok(o) if o.status.success() => CICDLoadResult::ReleaseEnvironmentRedeployed {
-                            release_id,
-                            environment_name
-                        },
-                        Ok(o) => CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string()),
+                        Ok(o) if o.status.success() => {
+                            CICDLoadResult::ReleaseEnvironmentRedeployed {
+                                release_id,
+                                environment_name,
+                            }
+                        }
+                        Ok(o) => {
+                            CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string())
+                        }
                         Err(e) => CICDLoadResult::Error(e.to_string()),
                     };
                     let _ = tx.send(result).await;
                 });
             }
 
-            ConfirmActionType::RejectApproval { approval_id, release_id, environment_name } => {
-                self.set_status(format!("Rejecting approval for {}...", environment_name));
+            ConfirmActionType::RejectApproval {
+                approval_id,
+                release_id,
+                environment_name,
+            } => {
+                self.set_status(format!("Rejecting approval for {environment_name}..."));
                 tokio::spawn(async move {
                     // Azure DevOps Approvals API expects an array of approval objects with id included
                     let body = serde_json::json!([{
@@ -2446,7 +2984,8 @@ impl App {
                         "status": "rejected",
                         "comments": "Rejected from lazyops"
                     }]);
-                    let temp_path = std::env::temp_dir().join(format!("reject_approval_{}.json", approval_id));
+                    let temp_path =
+                        std::env::temp_dir().join(format!("reject_approval_{approval_id}.json"));
 
                     if let Err(e) = tokio::fs::write(&temp_path, body.to_string()).await {
                         let _ = tx.send(CICDLoadResult::Error(e.to_string())).await;
@@ -2458,8 +2997,7 @@ impl App {
                         .args(["devops", "invoke"])
                         .args(["--area", "release"])
                         .args(["--resource", "approvals"])
-                        .args(["--route-parameters",
-                               &format!("project={}", project)])
+                        .args(["--route-parameters", &format!("project={project}")])
                         .args(["--http-method", "PATCH"])
                         .args(["--api-version", "7.1"])
                         .args(["--in-file", temp_path.to_str().unwrap()])
@@ -2476,7 +3014,9 @@ impl App {
                             release_id,
                             status: "rejected".to_string(),
                         },
-                        Ok(o) => CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string()),
+                        Ok(o) => {
+                            CICDLoadResult::Error(String::from_utf8_lossy(&o.stderr).to_string())
+                        }
                         Err(e) => CICDLoadResult::Error(e.to_string()),
                     };
                     let _ = tx.send(result).await;
@@ -2487,20 +3027,27 @@ impl App {
 
     // Data loading
     pub async fn load_sprints(&mut self) -> Result<()> {
-        let client = self.client().ok_or_else(|| anyhow::anyhow!("No project configured"))?;
+        let client = self
+            .client()
+            .ok_or_else(|| anyhow::anyhow!("No project configured"))?;
         self.sprints = client.get_sprints().await?;
 
         // Select current sprint by default
-        self.selected_sprint_idx = self.sprints.iter()
+        self.selected_sprint_idx = self
+            .sprints
+            .iter()
             .position(|s| s.attributes.time_frame.as_deref() == Some("current"))
             .unwrap_or(0);
 
-        self.sprint_list_state.select(Some(self.selected_sprint_idx));
+        self.sprint_list_state
+            .select(Some(self.selected_sprint_idx));
         Ok(())
     }
 
     pub async fn load_work_items(&mut self) -> Result<()> {
-        let client = self.client().ok_or_else(|| anyhow::anyhow!("No project configured"))?;
+        let client = self
+            .client()
+            .ok_or_else(|| anyhow::anyhow!("No project configured"))?;
         let sprint = self.sprints.get(self.selected_sprint_idx);
 
         if let Some(sprint) = sprint {
@@ -2525,7 +3072,11 @@ impl App {
         let mut seen = std::collections::HashSet::new();
         self.users.clear();
 
-        fn collect_users(items: &[WorkItem], users: &mut Vec<User>, seen: &mut std::collections::HashSet<String>) {
+        fn collect_users(
+            items: &[WorkItem],
+            users: &mut Vec<User>,
+            seen: &mut std::collections::HashSet<String>,
+        ) {
             for item in items {
                 if let Some(assignee) = &item.fields.assigned_to {
                     if seen.insert(assignee.unique_name.clone()) {
@@ -2541,7 +3092,8 @@ impl App {
 
         collect_users(&self.work_items, &mut self.users, &mut seen);
         // Sort by display name
-        self.users.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+        self.users
+            .sort_by(|a, b| a.display_name.cmp(&b.display_name));
     }
 
     // Flatten hierarchy for display with filters
@@ -2572,15 +3124,19 @@ impl App {
 
             for item in items {
                 // Apply filters
-                let state_match = filter_state.as_ref()
+                let state_match = filter_state
+                    .as_ref()
                     .map(|s| item.fields.state.eq_ignore_ascii_case(s))
                     .unwrap_or(true);
-                let assignee_match = filter_assignee.as_ref()
+                let assignee_match = filter_assignee
+                    .as_ref()
                     .map(|a| {
                         if a == "Unassigned" {
                             item.fields.assigned_to.is_none()
                         } else {
-                            item.fields.assigned_to.as_ref()
+                            item.fields
+                                .assigned_to
+                                .as_ref()
                                 .map(|at| at.display_name.eq_ignore_ascii_case(a))
                                 .unwrap_or(false)
                         }
@@ -2592,13 +3148,25 @@ impl App {
                 let is_pinned = depth == 0 && pinned.contains(&item.id);
 
                 // Check if any filters/search are active
-                let has_active_filter = !query.is_empty() || filter_state.is_some() || filter_assignee.is_some();
+                let has_active_filter =
+                    !query.is_empty() || filter_state.is_some() || filter_assignee.is_some();
 
                 // Only check child matches when filters are active
                 let mut child_matches = false;
                 if has_children && has_active_filter {
                     let mut temp = Vec::new();
-                    child_matches = flatten(&item.children, &mut temp, expanded, pinned, depth + 1, query, filter_state, filter_assignee, matcher, force_collapsed);
+                    child_matches = flatten(
+                        &item.children,
+                        &mut temp,
+                        expanded,
+                        pinned,
+                        depth + 1,
+                        query,
+                        filter_state,
+                        filter_assignee,
+                        matcher,
+                        force_collapsed,
+                    );
                 }
 
                 let passes_filter = state_match && assignee_match;
@@ -2609,7 +3177,9 @@ impl App {
                 } else {
                     let title_match = matcher.fuzzy_match(&item.fields.title, query).is_some();
                     let id_match = item.id.to_string().contains(query);
-                    let type_match = matcher.fuzzy_match(&item.fields.work_item_type, query).is_some();
+                    let type_match = matcher
+                        .fuzzy_match(&item.fields.work_item_type, query)
+                        .is_some();
                     title_match || id_match || type_match
                 };
 
@@ -2619,7 +3189,8 @@ impl App {
                 if should_show {
                     has_match = true;
                     // Only auto-expand when a child matches during filtering (unless force_collapsed)
-                    let show_expanded = is_expanded || (has_active_filter && child_matches && !force_collapsed);
+                    let show_expanded =
+                        is_expanded || (has_active_filter && child_matches && !force_collapsed);
                     visible.push(VisibleWorkItem {
                         item: item.clone(),
                         depth,
@@ -2630,7 +3201,18 @@ impl App {
 
                     // Only show children if explicitly expanded OR child matches filter
                     if show_expanded && has_children {
-                        flatten(&item.children, visible, expanded, pinned, depth + 1, query, filter_state, filter_assignee, matcher, force_collapsed);
+                        flatten(
+                            &item.children,
+                            visible,
+                            expanded,
+                            pinned,
+                            depth + 1,
+                            query,
+                            filter_state,
+                            filter_assignee,
+                            matcher,
+                            force_collapsed,
+                        );
                     }
                 }
             }
@@ -2640,12 +3222,16 @@ impl App {
 
         // Process pinned root items first, then non-pinned (keeps children with parents)
         // Collect indices to avoid borrowing issues
-        let pinned_indices: Vec<usize> = self.work_items.iter()
+        let pinned_indices: Vec<usize> = self
+            .work_items
+            .iter()
             .enumerate()
             .filter(|(_, i)| pinned.contains(&i.id))
             .map(|(idx, _)| idx)
             .collect();
-        let non_pinned_indices: Vec<usize> = self.work_items.iter()
+        let non_pinned_indices: Vec<usize> = self
+            .work_items
+            .iter()
             .enumerate()
             .filter(|(_, i)| !pinned.contains(&i.id))
             .map(|(idx, _)| idx)
@@ -2653,24 +3239,53 @@ impl App {
 
         // Flatten pinned items first
         for idx in pinned_indices {
-            flatten(&self.work_items[idx..idx+1], &mut self.visible_items, &self.expanded_items, pinned, 0, &query, &filter_state, &filter_assignee, matcher, force_collapsed);
+            flatten(
+                &self.work_items[idx..idx + 1],
+                &mut self.visible_items,
+                &self.expanded_items,
+                pinned,
+                0,
+                &query,
+                &filter_state,
+                &filter_assignee,
+                matcher,
+                force_collapsed,
+            );
         }
 
         // Then flatten non-pinned items
         for idx in non_pinned_indices {
-            flatten(&self.work_items[idx..idx+1], &mut self.visible_items, &self.expanded_items, pinned, 0, &query, &filter_state, &filter_assignee, matcher, force_collapsed);
+            flatten(
+                &self.work_items[idx..idx + 1],
+                &mut self.visible_items,
+                &self.expanded_items,
+                pinned,
+                0,
+                &query,
+                &filter_state,
+                &filter_assignee,
+                matcher,
+                force_collapsed,
+            );
         }
 
         // Reset selection if out of bounds
         if let Some(selected) = self.work_item_list_state.selected() {
             if selected >= self.visible_items.len() {
-                self.work_item_list_state.select(if self.visible_items.is_empty() { None } else { Some(0) });
+                self.work_item_list_state
+                    .select(if self.visible_items.is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    });
             }
         }
     }
 
     pub fn selected_work_item(&self) -> Option<&VisibleWorkItem> {
-        self.work_item_list_state.selected().and_then(|i| self.visible_items.get(i))
+        self.work_item_list_state
+            .selected()
+            .and_then(|i| self.visible_items.get(i))
     }
 
     pub fn selected_sprint(&self) -> Option<&Sprint> {
@@ -2701,7 +3316,10 @@ impl App {
     pub fn toggle_pin_pipeline(&mut self) {
         // Get current visual position before toggling
         let sorted_before = self.sorted_pipeline_indices();
-        let visual_pos = sorted_before.iter().position(|&i| i == self.selected_pipeline_idx).unwrap_or(0);
+        let visual_pos = sorted_before
+            .iter()
+            .position(|&i| i == self.selected_pipeline_idx)
+            .unwrap_or(0);
 
         if let Some(pipeline) = self.pipelines.get(self.selected_pipeline_idx) {
             let id = pipeline.id;
@@ -2725,7 +3343,10 @@ impl App {
     pub fn toggle_pin_release(&mut self) {
         // Get current visual position before toggling
         let sorted_before = self.sorted_release_indices();
-        let visual_pos = sorted_before.iter().position(|&i| i == self.selected_release_idx).unwrap_or(0);
+        let visual_pos = sorted_before
+            .iter()
+            .position(|&i| i == self.selected_release_idx)
+            .unwrap_or(0);
 
         if let Some(release) = self.releases.get(self.selected_release_idx) {
             let id = release.id;
@@ -2747,25 +3368,33 @@ impl App {
 
     /// Get sorted pipeline indices (pinned first, then alphabetical)
     pub fn sorted_pipeline_indices(&self) -> Vec<usize> {
-        let mut indices: Vec<(usize, bool, String)> = self.pipelines.iter()
+        let mut indices: Vec<(usize, bool, String)> = self
+            .pipelines
+            .iter()
             .enumerate()
             .filter(|(_, p)| {
                 // Apply search filter if active
                 if self.cicd_search_query.is_empty() {
                     true
                 } else {
-                    self.fuzzy_matcher.fuzzy_match(&p.name, &self.cicd_search_query).is_some()
+                    self.fuzzy_matcher
+                        .fuzzy_match(&p.name, &self.cicd_search_query)
+                        .is_some()
                 }
             })
-            .map(|(i, p)| (i, self.pinned_pipelines.contains(&p.id), p.name.to_lowercase()))
+            .map(|(i, p)| {
+                (
+                    i,
+                    self.pinned_pipelines.contains(&p.id),
+                    p.name.to_lowercase(),
+                )
+            })
             .collect();
 
-        indices.sort_by(|a, b| {
-            match (a.1, b.1) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.2.cmp(&b.2),
-            }
+        indices.sort_by(|a, b| match (a.1, b.1) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.2.cmp(&b.2),
         });
 
         indices.into_iter().map(|(i, _, _)| i).collect()
@@ -2773,25 +3402,33 @@ impl App {
 
     /// Get sorted release indices (pinned first, then alphabetical)
     pub fn sorted_release_indices(&self) -> Vec<usize> {
-        let mut indices: Vec<(usize, bool, String)> = self.releases.iter()
+        let mut indices: Vec<(usize, bool, String)> = self
+            .releases
+            .iter()
             .enumerate()
             .filter(|(_, r)| {
                 // Apply search filter if active and releases panel is focused
                 if self.cicd_search_query.is_empty() || self.cicd_focus != CICDFocus::Releases {
                     true
                 } else {
-                    self.fuzzy_matcher.fuzzy_match(&r.name, &self.cicd_search_query).is_some()
+                    self.fuzzy_matcher
+                        .fuzzy_match(&r.name, &self.cicd_search_query)
+                        .is_some()
                 }
             })
-            .map(|(i, r)| (i, self.pinned_releases.contains(&r.id), r.name.to_lowercase()))
+            .map(|(i, r)| {
+                (
+                    i,
+                    self.pinned_releases.contains(&r.id),
+                    r.name.to_lowercase(),
+                )
+            })
             .collect();
 
-        indices.sort_by(|a, b| {
-            match (a.1, b.1) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.2.cmp(&b.2),
-            }
+        indices.sort_by(|a, b| match (a.1, b.1) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.2.cmp(&b.2),
         });
 
         indices.into_iter().map(|(i, _, _)| i).collect()
@@ -2800,9 +3437,14 @@ impl App {
     /// Navigate to next pipeline in sorted order
     pub fn pipeline_next(&mut self) {
         let sorted = self.sorted_pipeline_indices();
-        if sorted.is_empty() { return; }
+        if sorted.is_empty() {
+            return;
+        }
 
-        let current_pos = sorted.iter().position(|&i| i == self.selected_pipeline_idx).unwrap_or(0);
+        let current_pos = sorted
+            .iter()
+            .position(|&i| i == self.selected_pipeline_idx)
+            .unwrap_or(0);
         let new_pos = (current_pos + 1).min(sorted.len() - 1);
         self.selected_pipeline_idx = sorted[new_pos];
         self.pipeline_list_state.select(Some(new_pos));
@@ -2811,9 +3453,14 @@ impl App {
     /// Navigate to previous pipeline in sorted order
     pub fn pipeline_prev(&mut self) {
         let sorted = self.sorted_pipeline_indices();
-        if sorted.is_empty() { return; }
+        if sorted.is_empty() {
+            return;
+        }
 
-        let current_pos = sorted.iter().position(|&i| i == self.selected_pipeline_idx).unwrap_or(0);
+        let current_pos = sorted
+            .iter()
+            .position(|&i| i == self.selected_pipeline_idx)
+            .unwrap_or(0);
         let new_pos = current_pos.saturating_sub(1);
         self.selected_pipeline_idx = sorted[new_pos];
         self.pipeline_list_state.select(Some(new_pos));
@@ -2822,9 +3469,14 @@ impl App {
     /// Navigate to next release in sorted order
     pub fn release_next(&mut self) {
         let sorted = self.sorted_release_indices();
-        if sorted.is_empty() { return; }
+        if sorted.is_empty() {
+            return;
+        }
 
-        let current_pos = sorted.iter().position(|&i| i == self.selected_release_idx).unwrap_or(0);
+        let current_pos = sorted
+            .iter()
+            .position(|&i| i == self.selected_release_idx)
+            .unwrap_or(0);
         let new_pos = (current_pos + 1).min(sorted.len() - 1);
         self.selected_release_idx = sorted[new_pos];
         self.release_list_state.select(Some(new_pos));
@@ -2833,9 +3485,14 @@ impl App {
     /// Navigate to previous release in sorted order
     pub fn release_prev(&mut self) {
         let sorted = self.sorted_release_indices();
-        if sorted.is_empty() { return; }
+        if sorted.is_empty() {
+            return;
+        }
 
-        let current_pos = sorted.iter().position(|&i| i == self.selected_release_idx).unwrap_or(0);
+        let current_pos = sorted
+            .iter()
+            .position(|&i| i == self.selected_release_idx)
+            .unwrap_or(0);
         let new_pos = current_pos.saturating_sub(1);
         self.selected_release_idx = sorted[new_pos];
         self.release_list_state.select(Some(new_pos));
@@ -2862,9 +3519,13 @@ impl App {
     // Navigation
     pub fn list_next(&mut self) {
         let len = self.visible_items.len();
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         // Stop at bottom, don't wrap
-        let i = self.work_item_list_state.selected()
+        let i = self
+            .work_item_list_state
+            .selected()
             .map(|i| (i + 1).min(len - 1))
             .unwrap_or(0);
         self.work_item_list_state.select(Some(i));
@@ -2873,9 +3534,13 @@ impl App {
 
     pub fn list_prev(&mut self) {
         let len = self.visible_items.len();
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         // Stop at top, don't wrap
-        let i = self.work_item_list_state.selected()
+        let i = self
+            .work_item_list_state
+            .selected()
             .map(|i| i.saturating_sub(1))
             .unwrap_or(0);
         self.work_item_list_state.select(Some(i));
@@ -2891,16 +3556,21 @@ impl App {
 
     pub fn list_bottom(&mut self) {
         if !self.visible_items.is_empty() {
-            self.work_item_list_state.select(Some(self.visible_items.len() - 1));
+            self.work_item_list_state
+                .select(Some(self.visible_items.len() - 1));
             self.preview_scroll = 0;
         }
     }
 
     pub fn list_jump_down(&mut self) {
         let len = self.visible_items.len();
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         let jump = 10; // Jump 10 items
-        let i = self.work_item_list_state.selected()
+        let i = self
+            .work_item_list_state
+            .selected()
             .map(|i| (i + jump).min(len - 1))
             .unwrap_or(0);
         self.work_item_list_state.select(Some(i));
@@ -2909,9 +3579,13 @@ impl App {
 
     pub fn list_jump_up(&mut self) {
         let len = self.visible_items.len();
-        if len == 0 { return; }
+        if len == 0 {
+            return;
+        }
         let jump = 10; // Jump 10 items
-        let i = self.work_item_list_state.selected()
+        let i = self
+            .work_item_list_state
+            .selected()
             .map(|i| i.saturating_sub(jump))
             .unwrap_or(0);
         self.work_item_list_state.select(Some(i));
@@ -2986,7 +3660,10 @@ impl App {
     }
 
     pub fn scroll_preview_down(&mut self) {
-        self.preview_scroll = self.preview_scroll.saturating_add(10).min(self.preview_scroll_max);
+        self.preview_scroll = self
+            .preview_scroll
+            .saturating_add(10)
+            .min(self.preview_scroll_max);
     }
 
     pub fn scroll_preview_up(&mut self) {
@@ -3004,9 +3681,17 @@ impl App {
     }
 
     /// Update relations for a work item by ID (in both work_items tree and visible_items)
-    pub fn update_work_item_relations(&mut self, id: i32, relations: Option<Vec<crate::azure::WorkItemRelation>>) {
+    pub fn update_work_item_relations(
+        &mut self,
+        id: i32,
+        relations: Option<Vec<crate::azure::WorkItemRelation>>,
+    ) {
         // Update in hierarchical work_items
-        fn update_in_tree(items: &mut [WorkItem], id: i32, relations: &Option<Vec<crate::azure::WorkItemRelation>>) -> bool {
+        fn update_in_tree(
+            items: &mut [WorkItem],
+            id: i32,
+            relations: &Option<Vec<crate::azure::WorkItemRelation>>,
+        ) -> bool {
             for item in items.iter_mut() {
                 if item.id == id {
                     item.relations = relations.clone();
@@ -3048,8 +3733,13 @@ impl App {
     }
 
     /// Cache all loaded relations before refresh
-    pub fn cache_relations(&self) -> std::collections::HashMap<i32, Vec<crate::azure::WorkItemRelation>> {
-        fn collect(items: &[WorkItem], cache: &mut std::collections::HashMap<i32, Vec<crate::azure::WorkItemRelation>>) {
+    pub fn cache_relations(
+        &self,
+    ) -> std::collections::HashMap<i32, Vec<crate::azure::WorkItemRelation>> {
+        fn collect(
+            items: &[WorkItem],
+            cache: &mut std::collections::HashMap<i32, Vec<crate::azure::WorkItemRelation>>,
+        ) {
             for item in items {
                 if let Some(relations) = &item.relations {
                     cache.insert(item.id, relations.clone());
@@ -3063,8 +3753,14 @@ impl App {
     }
 
     /// Restore cached relations after refresh
-    pub fn restore_relations(&mut self, cache: std::collections::HashMap<i32, Vec<crate::azure::WorkItemRelation>>) {
-        fn restore(items: &mut [WorkItem], cache: &std::collections::HashMap<i32, Vec<crate::azure::WorkItemRelation>>) {
+    pub fn restore_relations(
+        &mut self,
+        cache: std::collections::HashMap<i32, Vec<crate::azure::WorkItemRelation>>,
+    ) {
+        fn restore(
+            items: &mut [WorkItem],
+            cache: &std::collections::HashMap<i32, Vec<crate::azure::WorkItemRelation>>,
+        ) {
             for item in items.iter_mut() {
                 if let Some(relations) = cache.get(&item.id) {
                     item.relations = Some(relations.clone());
@@ -3092,7 +3788,8 @@ impl App {
         };
 
         // Filter out parent links (Hierarchy-Reverse) only
-        let mut refs: Vec<&crate::azure::WorkItemRelation> = relations.iter()
+        let mut refs: Vec<&crate::azure::WorkItemRelation> = relations
+            .iter()
             .filter(|r| r.rel != "System.LinkTypes.Hierarchy-Reverse")
             .collect();
 
@@ -3122,8 +3819,12 @@ impl App {
     /// Navigate relations list
     pub fn relations_next(&mut self) {
         let len = self.selected_relations().len();
-        if len == 0 { return; }
-        let i = self.relations_list_state.selected()
+        if len == 0 {
+            return;
+        }
+        let i = self
+            .relations_list_state
+            .selected()
             .map(|i| (i + 1).min(len - 1))
             .unwrap_or(0);
         self.relations_list_state.select(Some(i));
@@ -3131,8 +3832,12 @@ impl App {
 
     pub fn relations_prev(&mut self) {
         let len = self.selected_relations().len();
-        if len == 0 { return; }
-        let i = self.relations_list_state.selected()
+        if len == 0 {
+            return;
+        }
+        let i = self
+            .relations_list_state
+            .selected()
             .map(|i| i.saturating_sub(1))
             .unwrap_or(0);
         self.relations_list_state.select(Some(i));
@@ -3140,8 +3845,12 @@ impl App {
 
     pub fn relations_page_down(&mut self) {
         let len = self.selected_relations().len();
-        if len == 0 { return; }
-        let i = self.relations_list_state.selected()
+        if len == 0 {
+            return;
+        }
+        let i = self
+            .relations_list_state
+            .selected()
             .map(|i| (i + 10).min(len - 1))
             .unwrap_or(0);
         self.relations_list_state.select(Some(i));
@@ -3149,8 +3858,12 @@ impl App {
 
     pub fn relations_page_up(&mut self) {
         let len = self.selected_relations().len();
-        if len == 0 { return; }
-        let i = self.relations_list_state.selected()
+        if len == 0 {
+            return;
+        }
+        let i = self
+            .relations_list_state
+            .selected()
             .map(|i| i.saturating_sub(10))
             .unwrap_or(0);
         self.relations_list_state.select(Some(i));
@@ -3159,7 +3872,9 @@ impl App {
     /// Get the selected relation
     pub fn selected_relation(&self) -> Option<&crate::azure::WorkItemRelation> {
         let refs = self.selected_relations();
-        self.relations_list_state.selected().and_then(|i| refs.get(i).copied())
+        self.relations_list_state
+            .selected()
+            .and_then(|i| refs.get(i).copied())
     }
 
     /// Parse a relation into display-friendly format
@@ -3172,7 +3887,8 @@ impl App {
 
         // Parse artifact URL: vstfs:///Git/{Type}/{projectGuid}%2F{repoGuid}%2F{id}
         // We need to extract repoGuid for proper URLs
-        let parts: Vec<&str> = relation.url
+        let parts: Vec<&str> = relation
+            .url
             .split("%2F")
             .flat_map(|s| s.split("%2f"))
             .collect();
@@ -3181,15 +3897,17 @@ impl App {
             "Pull Request" => {
                 // parts: ["vstfs:", "", "", "Git", "PullRequestId", "{projectGuid}", "{repoGuid}", "{prId}"]
                 let pr_id = parts.last().unwrap_or(&"?");
-                let repo_guid = if parts.len() >= 3 { parts[parts.len() - 2] } else { "" };
+                let repo_guid = if parts.len() >= 3 {
+                    parts[parts.len() - 2]
+                } else {
+                    ""
+                };
 
                 let url = match (&base, &project_name) {
                     (Some(b), Some(p)) if !repo_guid.is_empty() => {
                         Some(format!("{b}/{p}/_git/{repo_guid}/pullrequest/{pr_id}"))
                     }
-                    (Some(b), Some(p)) => {
-                        Some(format!("{b}/{p}/_git/pullrequest/{pr_id}"))
-                    }
+                    (Some(b), Some(p)) => Some(format!("{b}/{p}/_git/pullrequest/{pr_id}")),
                     _ => None,
                 };
 
@@ -3210,16 +3928,18 @@ impl App {
             "Fixed in Commit" => {
                 // parts: ["vstfs:", "", "", "Git", "Commit", "{projectGuid}", "{repoGuid}", "{commitHash}"]
                 let hash = parts.last().unwrap_or(&"?");
-                let repo_guid = if parts.len() >= 3 { parts[parts.len() - 2] } else { "" };
+                let repo_guid = if parts.len() >= 3 {
+                    parts[parts.len() - 2]
+                } else {
+                    ""
+                };
                 let short_hash = if hash.len() > 7 { &hash[..7] } else { hash };
 
                 let url = match (&base, &project_name) {
                     (Some(b), Some(p)) if !repo_guid.is_empty() => {
                         Some(format!("{b}/{p}/_git/{repo_guid}/commit/{hash}"))
                     }
-                    (Some(b), Some(p)) => {
-                        Some(format!("{b}/{p}/_git/commit/{hash}"))
-                    }
+                    (Some(b), Some(p)) => Some(format!("{b}/{p}/_git/commit/{hash}")),
                     _ => None,
                 };
 
@@ -3278,9 +3998,15 @@ impl App {
                 // URL encode the filename for the query parameter
                 let encoded_filename = filename.replace(' ', "%20");
                 let url = if relation.url.contains("?") {
-                    Some(format!("{}&fileName={}&download=false", relation.url, encoded_filename))
+                    Some(format!(
+                        "{}&fileName={}&download=false",
+                        relation.url, encoded_filename
+                    ))
                 } else {
-                    Some(format!("{}?fileName={}&download=false", relation.url, encoded_filename))
+                    Some(format!(
+                        "{}?fileName={}&download=false",
+                        relation.url, encoded_filename
+                    ))
                 };
 
                 ParsedRelation {
@@ -3338,20 +4064,41 @@ impl App {
 
     // Dropdown navigation (for sprints, states, users)
     pub fn dropdown_next(&mut self, max: usize) {
-        if max == 0 { return; }
-        let i = self.dropdown_list_state.selected().map(|i| (i + 1) % max).unwrap_or(0);
+        if max == 0 {
+            return;
+        }
+        let i = self
+            .dropdown_list_state
+            .selected()
+            .map(|i| (i + 1) % max)
+            .unwrap_or(0);
         self.dropdown_list_state.select(Some(i));
     }
 
     pub fn dropdown_prev(&mut self, max: usize) {
-        if max == 0 { return; }
-        let i = self.dropdown_list_state.selected().map(|i| if i == 0 { max - 1 } else { i - 1 }).unwrap_or(0);
+        if max == 0 {
+            return;
+        }
+        let i = self
+            .dropdown_list_state
+            .selected()
+            .map(|i| if i == 0 { max - 1 } else { i - 1 })
+            .unwrap_or(0);
         self.dropdown_list_state.select(Some(i));
     }
 
     // Filter helpers
     pub fn available_filter_states(&self) -> Vec<&'static str> {
-        vec!["All", "New", "In Progress", "Done In Stage", "Done Not Released", "Done", "Tested w/Bugs", "Removed"]
+        vec![
+            "All",
+            "New",
+            "In Progress",
+            "Done In Stage",
+            "Done Not Released",
+            "Done",
+            "Tested w/Bugs",
+            "Removed",
+        ]
     }
 
     /// Get filtered states based on fuzzy input
@@ -3360,8 +4107,13 @@ impl App {
         if self.filter_input.is_empty() {
             return states;
         }
-        states.into_iter()
-            .filter(|s| self.fuzzy_matcher.fuzzy_match(s, &self.filter_input).is_some())
+        states
+            .into_iter()
+            .filter(|s| {
+                self.fuzzy_matcher
+                    .fuzzy_match(s, &self.filter_input)
+                    .is_some()
+            })
             .collect()
     }
 
@@ -3381,8 +4133,13 @@ impl App {
         if self.filter_input.is_empty() {
             return assignees;
         }
-        assignees.into_iter()
-            .filter(|a| self.fuzzy_matcher.fuzzy_match(a, &self.filter_input).is_some())
+        assignees
+            .into_iter()
+            .filter(|a| {
+                self.fuzzy_matcher
+                    .fuzzy_match(a, &self.filter_input)
+                    .is_some()
+            })
             .collect()
     }
 
@@ -3399,14 +4156,20 @@ impl App {
 
     /// Get filtered edit states based on fuzzy input (for changing state)
     pub fn filtered_edit_states(&self) -> Vec<&'static str> {
-        let states = self.selected_work_item()
+        let states = self
+            .selected_work_item()
             .map(|w| w.item.available_states())
             .unwrap_or_default();
         if self.filter_input.is_empty() {
             return states;
         }
-        states.into_iter()
-            .filter(|s| self.fuzzy_matcher.fuzzy_match(s, &self.filter_input).is_some())
+        states
+            .into_iter()
+            .filter(|s| {
+                self.fuzzy_matcher
+                    .fuzzy_match(s, &self.filter_input)
+                    .is_some()
+            })
             .collect()
     }
 
@@ -3415,8 +4178,13 @@ impl App {
         if self.filter_input.is_empty() {
             return self.users.iter().collect();
         }
-        self.users.iter()
-            .filter(|u| self.fuzzy_matcher.fuzzy_match(&u.display_name, &self.filter_input).is_some())
+        self.users
+            .iter()
+            .filter(|u| {
+                self.fuzzy_matcher
+                    .fuzzy_match(&u.display_name, &self.filter_input)
+                    .is_some()
+            })
             .collect()
     }
 
@@ -3451,6 +4219,7 @@ impl App {
     }
 
     /// Update the log file with new content (for live updates)
+    #[allow(dead_code)]
     pub fn update_log_file(&self) -> anyhow::Result<()> {
         if let Some(ref path) = self.log_file_path {
             std::fs::write(path, self.build_log_lines.join("\n"))?;
@@ -3487,6 +4256,390 @@ impl App {
             term.resize(cols, rows)?;
         }
         Ok(())
+    }
+
+    /// Start background PR data loader
+    pub fn start_pr_loader(&mut self) {
+        if self.pr_loading {
+            return;
+        }
+
+        // Try cache first
+        if let Some(project) = self.current_project() {
+            let project_name = project.name.clone();
+            if let Some(cached) = cache::load_pr(&project_name) {
+                let age = cached.age_seconds();
+                self.repositories = cached.repos;
+                if !self.repositories.is_empty() {
+                    self.repo_list_state.select(Some(0));
+                }
+                let mins = age / 60;
+                if mins > 0 {
+                    self.set_status(format!("Repos cached ({mins}m ago) - r to refresh"));
+                } else {
+                    self.set_status(format!("Repos cached ({age}s ago) - r to refresh"));
+                }
+                // Still set up the channel for later PR loads
+                let (tx, rx) = mpsc::channel(50);
+                self.pr_rx = Some(rx);
+                self.pr_tx = Some(tx);
+
+                // Auto-restore last repo
+                if let Some(last_repo) = cache::load_last_repo(&project_name) {
+                    if let Some(idx) = self.repositories.iter().position(|r| r.name == last_repo) {
+                        self.selected_repo_idx = idx;
+                        self.repo_list_state.select(Some(idx));
+                        self.pr_drill_down = PRDrillDown::PRs;
+                        self.load_prs_for_repo();
+                    }
+                }
+                return;
+            }
+        }
+
+        self.pr_loading = true;
+
+        let (tx, rx) = mpsc::channel(50);
+        self.pr_rx = Some(rx);
+        self.pr_tx = Some(tx.clone());
+
+        let client_info = self.current_project().map(crate::azure::AzureCli::new);
+
+        if let Some(client) = client_info {
+            let tx_repos = tx.clone();
+            tokio::spawn(async move {
+                match client.list_repositories().await {
+                    Ok(repos) => {
+                        let _ = tx_repos.send(PRLoadResult::Repositories(repos)).await;
+                    }
+                    Err(e) => {
+                        let _ = tx_repos.send(PRLoadResult::Error(e.to_string())).await;
+                    }
+                }
+            });
+        }
+    }
+
+    /// Start PR loader bypassing cache (for refresh)
+    pub fn start_pr_loader_fresh(&mut self) {
+        if self.pr_loading {
+            return;
+        }
+        self.pr_loading = true;
+
+        let (tx, rx) = mpsc::channel(50);
+        self.pr_rx = Some(rx);
+        self.pr_tx = Some(tx.clone());
+
+        let client_info = self.current_project().map(crate::azure::AzureCli::new);
+
+        if let Some(client) = client_info {
+            let tx_repos = tx.clone();
+            tokio::spawn(async move {
+                match client.list_repositories().await {
+                    Ok(repos) => {
+                        let _ = tx_repos.send(PRLoadResult::Repositories(repos)).await;
+                    }
+                    Err(e) => {
+                        let _ = tx_repos.send(PRLoadResult::Error(e.to_string())).await;
+                    }
+                }
+            });
+        }
+    }
+
+    /// Load all 4 PR panes for the selected repository (non-blocking, stale-while-revalidate)
+    pub fn load_prs_for_repo(&mut self) {
+        let repo_name = match self.repositories.get(self.selected_repo_idx) {
+            Some(r) => r.name.clone(),
+            None => return,
+        };
+        let repo_id = self.repositories[self.selected_repo_idx].id.clone();
+
+        self.current_repo_id = Some(repo_id);
+        self.current_repo_name = Some(repo_name.clone());
+
+        // Persist last repo choice
+        if let Some(project) = self.current_project() {
+            let _ = cache::save_last_repo(&project.name, &repo_name);
+        }
+
+        // Try PR list cache first (stale-while-revalidate)
+        if let Some(project) = self.current_project() {
+            if let Some(cached) = cache::load_pr_list(&project.name, &repo_name) {
+                let age = cached.age_seconds();
+                let stale = cached.needs_refresh();
+                self.pr_active = cached.active;
+                self.pr_mine = cached.mine;
+                self.pr_completed = cached.completed;
+                self.pr_abandoned = cached.abandoned;
+                if !self.pull_requests().is_empty() {
+                    self.pr_list_state.select(Some(0));
+                }
+                let mins = age / 60;
+                if mins > 0 {
+                    self.set_status(format!("PRs cached ({mins}m ago)"));
+                } else {
+                    self.set_status(format!("PRs cached ({age}s ago)"));
+                }
+                if !stale {
+                    return;
+                }
+            }
+        }
+
+        // Background refresh
+        let current_user = self.current_user.clone();
+
+        if let Some(tx) = &self.pr_tx {
+            // Fire off all 4 loads in parallel
+            for &pane in &[
+                PRFocus::Active,
+                PRFocus::Mine,
+                PRFocus::Completed,
+                PRFocus::Abandoned,
+            ] {
+                let tx = tx.clone();
+                let client = self.current_project().map(crate::azure::AzureCli::new);
+                let repo = repo_name.clone();
+                let user = current_user.clone();
+                let status = pane.filter_status().to_string();
+                let is_mine = pane.is_mine();
+
+                if let Some(client) = client {
+                    tokio::spawn(async move {
+                        let creator = if is_mine { user.as_deref() } else { None };
+                        match client
+                            .list_pull_requests(Some(&repo), &status, creator, Some(50))
+                            .await
+                        {
+                            Ok(prs) => {
+                                let _ = tx.send(PRLoadResult::PullRequests(pane, prs)).await;
+                            }
+                            Err(e) => {
+                                let _ = tx.send(PRLoadResult::Error(e.to_string())).await;
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    /// Refresh only the current pane's PRs (non-blocking)
+    #[allow(dead_code)]
+    pub fn refresh_current_pr_pane(&mut self) {
+        let repo_name = match &self.current_repo_name {
+            Some(n) => n.clone(),
+            None => return,
+        };
+
+        let pane = if self.pr_focus.is_list() {
+            self.pr_focus
+        } else {
+            self.pr_last_list_focus
+        };
+        let current_user = self.current_user.clone();
+        let status = pane.filter_status().to_string();
+        let is_mine = pane.is_mine();
+
+        if let Some(tx) = &self.pr_tx {
+            let tx = tx.clone();
+            let client = self.current_project().map(crate::azure::AzureCli::new);
+
+            if let Some(client) = client {
+                tokio::spawn(async move {
+                    let creator = if is_mine {
+                        current_user.as_deref()
+                    } else {
+                        None
+                    };
+                    match client
+                        .list_pull_requests(Some(&repo_name), &status, creator, Some(50))
+                        .await
+                    {
+                        Ok(prs) => {
+                            let _ = tx.send(PRLoadResult::PullRequests(pane, prs)).await;
+                        }
+                        Err(e) => {
+                            let _ = tx.send(PRLoadResult::Error(e.to_string())).await;
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    /// Load PR details (threads, policies) for selected PR
+    pub fn load_pr_detail(&mut self) {
+        let pr = match self.pull_requests().get(self.selected_pr_idx) {
+            Some(p) => p.clone(),
+            None => return,
+        };
+        let pr_id = pr.pull_request_id;
+        let repo_id = self.current_repo_id.clone().unwrap_or_default();
+
+        self.selected_pr_detail = Some(pr);
+        self.pr_threads.clear();
+        self.pr_policies.clear();
+        self.pr_preview_scroll = 0;
+
+        eprintln!(
+            "[DEBUG] load_pr_detail: pr_tx={}, pr_id={}",
+            self.pr_tx.is_some(),
+            pr_id
+        );
+        if let Some(tx) = &self.pr_tx {
+            let tx_threads = tx.clone();
+            let tx_policies = tx.clone();
+
+            let client = self.current_project().map(crate::azure::AzureCli::new);
+            eprintln!("[DEBUG] load_pr_detail: client={}", client.is_some());
+
+            if let Some(client) = client {
+                let client2 = self
+                    .current_project()
+                    .map(crate::azure::AzureCli::new)
+                    .unwrap();
+
+                // Load threads
+                tokio::spawn(async move {
+                    match client.list_pr_threads(&repo_id, pr_id).await {
+                        Ok(threads) => {
+                            let _ = tx_threads.send(PRLoadResult::PRThreads(threads)).await;
+                        }
+                        Err(e) => {
+                            let _ = tx_threads.send(PRLoadResult::Error(e.to_string())).await;
+                        }
+                    }
+                });
+
+                // Load policies
+                tokio::spawn(async move {
+                    match client2.list_pr_policies(pr_id).await {
+                        Ok(policies) => {
+                            eprintln!(
+                                "[DEBUG] Loaded {} policies for PR #{}",
+                                policies.len(),
+                                pr_id
+                            );
+                            let _ = tx_policies.send(PRLoadResult::PRPolicies(policies)).await;
+                        }
+                        Err(e) => {
+                            eprintln!("[DEBUG] Policy load error for PR #{pr_id}: {e}");
+                            let _ = tx_policies.send(PRLoadResult::Error(e.to_string())).await;
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    /// Poll for PR load results (non-blocking)
+    pub fn poll_pr_results(&mut self) {
+        let mut results = Vec::new();
+
+        if let Some(rx) = &mut self.pr_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(result) => results.push(result),
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => break,
+                }
+            }
+        }
+
+        for result in results {
+            match result {
+                PRLoadResult::Repositories(repos) => {
+                    self.repositories = repos;
+                    self.pr_loading = false;
+                    if !self.repositories.is_empty() {
+                        self.repo_list_state.select(Some(0));
+                    }
+                    // Save to cache
+                    if let Some(project) = self.current_project() {
+                        let entry = cache::PRCacheEntry::new(self.repositories.clone());
+                        let _ = cache::save_pr(&project.name, &entry);
+
+                        // Auto-restore last repo
+                        if let Some(last_repo) = cache::load_last_repo(&project.name) {
+                            if let Some(idx) =
+                                self.repositories.iter().position(|r| r.name == last_repo)
+                            {
+                                self.selected_repo_idx = idx;
+                                self.repo_list_state.select(Some(idx));
+                                self.pr_drill_down = PRDrillDown::PRs;
+                                self.load_prs_for_repo();
+                            }
+                        }
+                    }
+                    self.set_status("Repositories loaded");
+                }
+                PRLoadResult::PullRequests(pane, prs) => {
+                    let count = prs.len();
+                    match pane {
+                        PRFocus::Active | PRFocus::Preview => self.pr_active = prs,
+                        PRFocus::Mine => self.pr_mine = prs,
+                        PRFocus::Completed => self.pr_completed = prs,
+                        PRFocus::Abandoned => self.pr_abandoned = prs,
+                    }
+                    // Update list state if this is the currently viewed pane
+                    let current_pane = if self.pr_focus.is_list() {
+                        self.pr_focus
+                    } else {
+                        self.pr_last_list_focus
+                    };
+                    if pane == current_pane
+                        || (pane == PRFocus::Active && current_pane == PRFocus::Preview)
+                    {
+                        if count > 0 {
+                            self.pr_list_state.select(Some(0));
+                        }
+                        self.set_status(format!("{count} pull requests"));
+                    }
+                    // Save to cache
+                    if let Some(project) = self.current_project() {
+                        if let Some(repo_name) = &self.current_repo_name {
+                            let entry = cache::PRListCacheEntry::new(
+                                repo_name,
+                                self.pr_active.clone(),
+                                self.pr_mine.clone(),
+                                self.pr_completed.clone(),
+                                self.pr_abandoned.clone(),
+                            );
+                            let _ = cache::save_pr_list(&project.name, &entry);
+                        }
+                    }
+                }
+                PRLoadResult::PRThreads(threads) => {
+                    self.pr_threads = threads;
+                }
+                PRLoadResult::PRPolicies(policies) => {
+                    eprintln!(
+                        "[DEBUG] poll_pr_results received {} policies",
+                        policies.len()
+                    );
+                    self.pr_policies = policies;
+                }
+                PRLoadResult::PRWorkItems(items) => {
+                    self.pr_work_items = Some(items);
+                }
+                PRLoadResult::PRVoted { pr_id, vote } => {
+                    self.set_status(format!("Voted '{vote}' on PR #{pr_id}"));
+                }
+                PRLoadResult::PRCommented { pr_id } => {
+                    self.set_status(format!("Comment added to PR #{pr_id}"));
+                }
+                PRLoadResult::PRDetail(pr) => {
+                    self.selected_pr_detail = Some(*pr);
+                }
+                PRLoadResult::Error(msg) => {
+                    self.pr_loading = false;
+                    self.set_error(format!("PR error: {msg}"));
+                }
+            }
+        }
     }
 }
 
@@ -3530,7 +4683,11 @@ mod tests {
         let sorted = app.sorted_pipeline_indices();
 
         // Should be sorted alphabetically: Alpha (1), Beta (2), Zebra (0)
-        assert_eq!(sorted, vec![1, 2, 0], "Pipelines should be sorted alphabetically");
+        assert_eq!(
+            sorted,
+            vec![1, 2, 0],
+            "Pipelines should be sorted alphabetically"
+        );
 
         // First selected should be Alpha (index 1 in original list)
         assert_eq!(sorted[0], 1);
@@ -3555,7 +4712,11 @@ mod tests {
         let sorted = app.sorted_pipeline_indices();
 
         // Should be: Zebra (pinned), then Alpha, Beta alphabetically
-        assert_eq!(sorted, vec![0, 1, 2], "Pinned should come first, then alphabetical");
+        assert_eq!(
+            sorted,
+            vec![0, 1, 2],
+            "Pinned should come first, then alphabetical"
+        );
         assert_eq!(app.pipelines[sorted[0]].name, "Zebra");
     }
 
@@ -3599,7 +4760,11 @@ mod tests {
 
         let sorted = app.sorted_release_indices();
 
-        assert_eq!(sorted, vec![1, 2, 0], "Releases should be sorted alphabetically");
+        assert_eq!(
+            sorted,
+            vec![1, 2, 0],
+            "Releases should be sorted alphabetically"
+        );
         assert_eq!(app.releases[sorted[0]].name, "Alpha");
     }
 
@@ -3734,7 +4899,11 @@ mod tests {
 
         app.rebuild_visible_items();
 
-        assert_eq!(app.visible_items.len(), 3, "No filters should show all items");
+        assert_eq!(
+            app.visible_items.len(),
+            3,
+            "No filters should show all items"
+        );
     }
 
     #[test]
@@ -3751,7 +4920,11 @@ mod tests {
         app.filter_state = Some("Active".to_string());
         app.rebuild_visible_items();
 
-        assert_eq!(app.visible_items.len(), 2, "Should filter to Active items only");
+        assert_eq!(
+            app.visible_items.len(),
+            2,
+            "Should filter to Active items only"
+        );
         assert_eq!(app.visible_items[0].item.id, 1);
         assert_eq!(app.visible_items[1].item.id, 3);
     }
@@ -3770,7 +4943,11 @@ mod tests {
         app.filter_assignee = Some("Alice".to_string());
         app.rebuild_visible_items();
 
-        assert_eq!(app.visible_items.len(), 2, "Should filter to Alice's items only");
+        assert_eq!(
+            app.visible_items.len(),
+            2,
+            "Should filter to Alice's items only"
+        );
         assert_eq!(app.visible_items[0].item.id, 1);
         assert_eq!(app.visible_items[1].item.id, 3);
     }
@@ -3809,7 +4986,10 @@ mod tests {
         app.rebuild_visible_items();
 
         assert_eq!(app.visible_items.len(), 3);
-        assert_eq!(app.visible_items[0].item.id, 3, "Pinned item should appear first");
+        assert_eq!(
+            app.visible_items[0].item.id, 3,
+            "Pinned item should appear first"
+        );
     }
 
     // Tests for cicd_search_query filtering
@@ -3827,9 +5007,19 @@ mod tests {
         app.cicd_search_query = "frontend".to_string();
         let sorted = app.sorted_pipeline_indices();
 
-        assert_eq!(sorted.len(), 2, "Should filter to pipelines matching 'frontend'");
-        assert!(app.pipelines[sorted[0]].name.to_lowercase().contains("frontend"));
-        assert!(app.pipelines[sorted[1]].name.to_lowercase().contains("frontend"));
+        assert_eq!(
+            sorted.len(),
+            2,
+            "Should filter to pipelines matching 'frontend'"
+        );
+        assert!(app.pipelines[sorted[0]]
+            .name
+            .to_lowercase()
+            .contains("frontend"));
+        assert!(app.pipelines[sorted[1]]
+            .name
+            .to_lowercase()
+            .contains("frontend"));
     }
 
     #[test]
@@ -3848,9 +5038,19 @@ mod tests {
         app.cicd_search_query = "production".to_string();
         let sorted = app.sorted_release_indices();
 
-        assert_eq!(sorted.len(), 2, "Should filter to releases matching 'production'");
-        assert!(app.releases[sorted[0]].name.to_lowercase().contains("production"));
-        assert!(app.releases[sorted[1]].name.to_lowercase().contains("production"));
+        assert_eq!(
+            sorted.len(),
+            2,
+            "Should filter to releases matching 'production'"
+        );
+        assert!(app.releases[sorted[0]]
+            .name
+            .to_lowercase()
+            .contains("production"));
+        assert!(app.releases[sorted[1]]
+            .name
+            .to_lowercase()
+            .contains("production"));
     }
 
     // Tests for PreviewTab next/prev
@@ -3888,7 +5088,10 @@ mod tests {
         });
 
         let desc = dialog.description();
-        assert!(desc.contains("Retrigger") || desc.contains("Re-run"), "Should mention retrigger");
+        assert!(
+            desc.contains("Retrigger") || desc.contains("Re-run"),
+            "Should mention retrigger"
+        );
         assert!(desc.contains("20240101.2"), "Should include build number");
     }
 
@@ -3915,7 +5118,10 @@ mod tests {
 
         let desc = dialog.description();
         assert!(desc.contains("Cancel"), "Should mention cancel");
-        assert!(desc.contains("Production"), "Should include environment name");
+        assert!(
+            desc.contains("Production"),
+            "Should include environment name"
+        );
         assert!(desc.contains("Release-10"), "Should include release name");
     }
 
@@ -3929,7 +5135,10 @@ mod tests {
         });
 
         let desc = dialog.description();
-        assert!(desc.contains("Redeploy") || desc.contains("Retrigger"), "Should mention redeploy/retrigger");
+        assert!(
+            desc.contains("Redeploy") || desc.contains("Retrigger"),
+            "Should mention redeploy/retrigger"
+        );
         assert!(desc.contains("Staging"), "Should include environment name");
         assert!(desc.contains("Release-20"), "Should include release name");
     }
@@ -3944,6 +5153,9 @@ mod tests {
 
         let desc = dialog.description();
         assert!(desc.contains("Reject"), "Should mention reject");
-        assert!(desc.contains("Production"), "Should include environment name");
+        assert!(
+            desc.contains("Production"),
+            "Should include environment name"
+        );
     }
 }

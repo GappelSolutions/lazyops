@@ -8,6 +8,7 @@ use ratatui::prelude::*;
 use std::time::{Duration, Instant};
 
 /// Format ticket content for clipboard (no names, just content)
+#[allow(dead_code)]
 fn format_ticket_content(item: &WorkItem) -> String {
     let mut content = String::new();
 
@@ -85,6 +86,7 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> R
         app.poll_relations();
         app.poll_titles();
         app.poll_cicd();
+        app.poll_pr_results();
         app.poll_live_preview();
         app.poll_release_refresh();
 
@@ -108,7 +110,10 @@ pub async fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> R
         }
 
         // Full data refresh every 5 minutes
-        if !app.loading && app.input_mode == InputMode::Normal && last_refresh.elapsed() >= refresh_interval {
+        if !app.loading
+            && app.input_mode == InputMode::Normal
+            && last_refresh.elapsed() >= refresh_interval
+        {
             background_full_refresh(app).await;
             last_refresh = Instant::now();
         }
@@ -152,7 +157,9 @@ fn key_to_terminal_bytes(key: &KeyEvent) -> Option<Vec<u8>> {
     match key.code {
         KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Ctrl+letter -> ASCII control code
-            let ctrl_code = (c.to_ascii_lowercase() as u8).wrapping_sub(b'a').wrapping_add(1);
+            let ctrl_code = (c.to_ascii_lowercase() as u8)
+                .wrapping_sub(b'a')
+                .wrapping_add(1);
             Some(vec![ctrl_code])
         }
         KeyCode::Char(c) => Some(c.to_string().into_bytes()),
@@ -214,34 +221,30 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
 
     // Handle based on input mode
     match app.input_mode {
-        InputMode::Help => {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
-                    app.input_mode = InputMode::Normal;
-                }
-                _ => {}
+        InputMode::Help => match key.code {
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                app.input_mode = InputMode::Normal;
             }
-        }
+            _ => {}
+        },
 
-        InputMode::SprintSelect => {
-            match key.code {
-                KeyCode::Esc => app.input_mode = InputMode::Normal,
-                KeyCode::Char('j') | KeyCode::Down => app.dropdown_next(app.sprints.len()),
-                KeyCode::Char('k') | KeyCode::Up => app.dropdown_prev(app.sprints.len()),
-                KeyCode::Enter => {
-                    if let Some(idx) = app.dropdown_list_state.selected() {
-                        app.selected_sprint_idx = idx;
-                        app.input_mode = InputMode::Normal;
-                        app.set_loading(true, "Loading sprint...");
-                        if let Err(e) = app.load_work_items().await {
-                            app.set_error(format!("Failed to load: {e}"));
-                        }
-                        app.set_loading(false, "");
+        InputMode::SprintSelect => match key.code {
+            KeyCode::Esc => app.input_mode = InputMode::Normal,
+            KeyCode::Char('j') | KeyCode::Down => app.dropdown_next(app.sprints.len()),
+            KeyCode::Char('k') | KeyCode::Up => app.dropdown_prev(app.sprints.len()),
+            KeyCode::Enter => {
+                if let Some(idx) = app.dropdown_list_state.selected() {
+                    app.selected_sprint_idx = idx;
+                    app.input_mode = InputMode::Normal;
+                    app.set_loading(true, "Loading sprint...");
+                    if let Err(e) = app.load_work_items().await {
+                        app.set_error(format!("Failed to load: {e}"));
                     }
+                    app.set_loading(false, "");
                 }
-                _ => {}
             }
-        }
+            _ => {}
+        },
 
         InputMode::ProjectSelect => {
             match key.code {
@@ -252,6 +255,10 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                     if let Some(idx) = app.dropdown_list_state.selected() {
                         app.current_project_idx = idx;
                         app.input_mode = InputMode::Normal;
+                        // Persist last project choice
+                        if let Some(p) = app.current_project() {
+                            let _ = crate::cache::save_last_project(&p.name);
+                        }
                         app.set_loading(true, "Loading project...");
                         let _ = app.load_sprints().await;
                         let _ = app.load_work_items().await;
@@ -273,7 +280,9 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 KeyCode::Down => app.dropdown_next(states.len()),
                 KeyCode::Up => app.dropdown_prev(states.len()),
                 KeyCode::Enter => {
-                    if let (Some(idx), Some(work_item)) = (app.dropdown_list_state.selected(), app.selected_work_item()) {
+                    if let (Some(idx), Some(work_item)) =
+                        (app.dropdown_list_state.selected(), app.selected_work_item())
+                    {
                         if let Some(state) = states.get(idx) {
                             let id = work_item.item.id;
                             if let Some(client) = app.client() {
@@ -312,13 +321,21 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 KeyCode::Down => app.dropdown_next(assignees.len()),
                 KeyCode::Up => app.dropdown_prev(assignees.len()),
                 KeyCode::Enter => {
-                    if let (Some(idx), Some(work_item)) = (app.dropdown_list_state.selected(), app.selected_work_item()) {
+                    if let (Some(idx), Some(work_item)) =
+                        (app.dropdown_list_state.selected(), app.selected_work_item())
+                    {
                         if let Some(user) = assignees.get(idx) {
                             let id = work_item.item.id;
                             if let Some(client) = app.client() {
-                                match client.update_work_item(id, "assigned-to", &user.unique_name).await {
+                                match client
+                                    .update_work_item(id, "assigned-to", &user.unique_name)
+                                    .await
+                                {
                                     Ok(_) => {
-                                        app.set_status(format!("Assigned to {}", user.display_name));
+                                        app.set_status(format!(
+                                            "Assigned to {}",
+                                            user.display_name
+                                        ));
                                         let _ = app.load_work_items().await;
                                     }
                                     Err(e) => app.set_error(format!("Failed: {e}")),
@@ -367,54 +384,99 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
         InputMode::CICDSearch => {
             match key.code {
                 KeyCode::Esc => {
-                    app.cicd_search_query.clear();
+                    match app.current_view {
+                        View::PRs => app.pr_search_query.clear(),
+                        _ => app.cicd_search_query.clear(),
+                    }
                     app.input_mode = InputMode::Normal;
                 }
                 KeyCode::Enter => {
                     app.input_mode = InputMode::Normal;
                 }
                 KeyCode::Backspace => {
-                    app.cicd_search_query.pop();
-                    // Reset selection to first matching item based on focus
-                    match app.cicd_focus {
-                        crate::app::CICDFocus::Pipelines => {
-                            match app.pipeline_drill_down {
-                                crate::app::PipelineDrillDown::Tasks => app.selected_task_idx = 0,
-                                crate::app::PipelineDrillDown::Runs => app.selected_pipeline_run_idx = 0,
-                                crate::app::PipelineDrillDown::None => app.select_first_pipeline(),
+                    match app.current_view {
+                        View::PRs => {
+                            app.pr_search_query.pop();
+                            match app.pr_drill_down {
+                                crate::app::PRDrillDown::Repos => app.selected_repo_idx = 0,
+                                crate::app::PRDrillDown::PRs => app.selected_pr_idx = 0,
                             }
                         }
-                        crate::app::CICDFocus::Releases => {
-                            match app.release_drill_down {
-                                crate::app::ReleaseDrillDown::Tasks => app.selected_release_task_idx = 0,
-                                crate::app::ReleaseDrillDown::Stages => app.selected_release_stage_idx = 0,
-                                crate::app::ReleaseDrillDown::Items => app.selected_release_item_idx = 0,
-                                crate::app::ReleaseDrillDown::None => app.select_first_release(),
+                        _ => {
+                            app.cicd_search_query.pop();
+                            // Reset selection to first matching item based on focus
+                            match app.cicd_focus {
+                                crate::app::CICDFocus::Pipelines => match app.pipeline_drill_down {
+                                    crate::app::PipelineDrillDown::Tasks => {
+                                        app.selected_task_idx = 0
+                                    }
+                                    crate::app::PipelineDrillDown::Runs => {
+                                        app.selected_pipeline_run_idx = 0
+                                    }
+                                    crate::app::PipelineDrillDown::None => {
+                                        app.select_first_pipeline()
+                                    }
+                                },
+                                crate::app::CICDFocus::Releases => match app.release_drill_down {
+                                    crate::app::ReleaseDrillDown::Tasks => {
+                                        app.selected_release_task_idx = 0
+                                    }
+                                    crate::app::ReleaseDrillDown::Stages => {
+                                        app.selected_release_stage_idx = 0
+                                    }
+                                    crate::app::ReleaseDrillDown::Items => {
+                                        app.selected_release_item_idx = 0
+                                    }
+                                    crate::app::ReleaseDrillDown::None => {
+                                        app.select_first_release()
+                                    }
+                                },
+                                _ => {}
                             }
                         }
-                        _ => {}
                     }
                 }
                 KeyCode::Char(c) => {
-                    app.cicd_search_query.push(c);
-                    // Reset selection to first matching item based on focus
-                    match app.cicd_focus {
-                        crate::app::CICDFocus::Pipelines => {
-                            match app.pipeline_drill_down {
-                                crate::app::PipelineDrillDown::Tasks => app.selected_task_idx = 0,
-                                crate::app::PipelineDrillDown::Runs => app.selected_pipeline_run_idx = 0,
-                                crate::app::PipelineDrillDown::None => app.select_first_pipeline(),
+                    match app.current_view {
+                        View::PRs => {
+                            app.pr_search_query.push(c);
+                            match app.pr_drill_down {
+                                crate::app::PRDrillDown::Repos => app.selected_repo_idx = 0,
+                                crate::app::PRDrillDown::PRs => app.selected_pr_idx = 0,
                             }
                         }
-                        crate::app::CICDFocus::Releases => {
-                            match app.release_drill_down {
-                                crate::app::ReleaseDrillDown::Tasks => app.selected_release_task_idx = 0,
-                                crate::app::ReleaseDrillDown::Stages => app.selected_release_stage_idx = 0,
-                                crate::app::ReleaseDrillDown::Items => app.selected_release_item_idx = 0,
-                                crate::app::ReleaseDrillDown::None => app.select_first_release(),
+                        _ => {
+                            app.cicd_search_query.push(c);
+                            // Reset selection to first matching item based on focus
+                            match app.cicd_focus {
+                                crate::app::CICDFocus::Pipelines => match app.pipeline_drill_down {
+                                    crate::app::PipelineDrillDown::Tasks => {
+                                        app.selected_task_idx = 0
+                                    }
+                                    crate::app::PipelineDrillDown::Runs => {
+                                        app.selected_pipeline_run_idx = 0
+                                    }
+                                    crate::app::PipelineDrillDown::None => {
+                                        app.select_first_pipeline()
+                                    }
+                                },
+                                crate::app::CICDFocus::Releases => match app.release_drill_down {
+                                    crate::app::ReleaseDrillDown::Tasks => {
+                                        app.selected_release_task_idx = 0
+                                    }
+                                    crate::app::ReleaseDrillDown::Stages => {
+                                        app.selected_release_stage_idx = 0
+                                    }
+                                    crate::app::ReleaseDrillDown::Items => {
+                                        app.selected_release_item_idx = 0
+                                    }
+                                    crate::app::ReleaseDrillDown::None => {
+                                        app.select_first_release()
+                                    }
+                                },
+                                _ => {}
                             }
                         }
-                        _ => {}
                     }
                 }
                 _ => {}
@@ -502,7 +564,8 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 KeyCode::Char('j') | KeyCode::Down => {
                     if let Some(dialog) = &mut app.release_trigger_dialog {
                         if !dialog.stages.is_empty() {
-                            dialog.selected_idx = (dialog.selected_idx + 1).min(dialog.stages.len() - 1);
+                            dialog.selected_idx =
+                                (dialog.selected_idx + 1).min(dialog.stages.len() - 1);
                         }
                     }
                 }
@@ -549,11 +612,8 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
 
         InputMode::ApprovalConfirm => {
             // Placeholder for approval confirm mode
-            match key.code {
-                KeyCode::Esc => {
-                    app.input_mode = InputMode::Normal;
-                }
-                _ => {}
+            if key.code == KeyCode::Esc {
+                app.input_mode = InputMode::Normal;
             }
         }
 
@@ -563,92 +623,173 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 match key.code {
                     KeyCode::Char('d') => {
                         match app.current_view {
-                            View::Tasks => {
-                                match app.focus {
-                                    Focus::WorkItems => app.list_jump_down(),
-                                    Focus::Preview => {
-                                        if app.preview_tab == crate::app::PreviewTab::References {
-                                            app.relations_page_down();
-                                        } else {
-                                            app.preview_scroll = app.preview_scroll.saturating_add(20).min(app.preview_scroll_max);
-                                        }
+                            View::Tasks => match app.focus {
+                                Focus::WorkItems => app.list_jump_down(),
+                                Focus::Preview => {
+                                    if app.preview_tab == crate::app::PreviewTab::References {
+                                        app.relations_page_down();
+                                    } else {
+                                        app.preview_scroll = app
+                                            .preview_scroll
+                                            .saturating_add(20)
+                                            .min(app.preview_scroll_max);
                                     }
                                 }
-                            }
+                            },
+                            View::PRs => match app.pr_focus {
+                                crate::app::PRFocus::Active
+                                | crate::app::PRFocus::Mine
+                                | crate::app::PRFocus::Completed
+                                | crate::app::PRFocus::Abandoned => match app.pr_drill_down {
+                                    crate::app::PRDrillDown::Repos => {
+                                        if !app.repositories.is_empty() {
+                                            app.selected_repo_idx = (app.selected_repo_idx + 10)
+                                                .min(app.repositories.len() - 1);
+                                        }
+                                    }
+                                    crate::app::PRDrillDown::PRs => {
+                                        if !app.pull_requests().is_empty() {
+                                            app.selected_pr_idx = (app.selected_pr_idx + 10)
+                                                .min(app.pull_requests().len() - 1);
+                                        }
+                                    }
+                                },
+                                crate::app::PRFocus::Preview => {
+                                    app.pr_preview_scroll =
+                                        app.pr_preview_scroll.saturating_add(10);
+                                }
+                            },
                             View::CICD => {
                                 // Page down based on focus
                                 if app.cicd_focus == crate::app::CICDFocus::Preview {
                                     // Scroll preview pane or logs
-                                    if app.release_drill_down == crate::app::ReleaseDrillDown::Tasks && !app.release_task_logs.is_empty() {
+                                    if app.release_drill_down == crate::app::ReleaseDrillDown::Tasks
+                                        && !app.release_task_logs.is_empty()
+                                    {
                                         app.log_scroll = app.log_scroll.saturating_add(20);
                                     } else {
-                                        app.cicd_preview_scroll = app.cicd_preview_scroll.saturating_add(10);
+                                        app.cicd_preview_scroll =
+                                            app.cicd_preview_scroll.saturating_add(10);
                                     }
-                                } else if app.pipeline_drill_down == crate::app::PipelineDrillDown::Tasks {
+                                } else if app.pipeline_drill_down
+                                    == crate::app::PipelineDrillDown::Tasks
+                                {
                                     if !app.build_log_lines.is_empty() {
                                         app.log_scroll = app.log_scroll.saturating_add(20);
                                     } else {
                                         let task_count = app.get_timeline_tasks().len();
                                         if task_count > 0 {
-                                            app.selected_task_idx = (app.selected_task_idx + 10).min(task_count - 1);
+                                            app.selected_task_idx =
+                                                (app.selected_task_idx + 10).min(task_count - 1);
                                         }
                                     }
-                                } else if app.pipeline_drill_down == crate::app::PipelineDrillDown::Runs {
+                                } else if app.pipeline_drill_down
+                                    == crate::app::PipelineDrillDown::Runs
+                                {
                                     if !app.pipeline_runs.is_empty() {
-                                        app.selected_pipeline_run_idx = (app.selected_pipeline_run_idx + 10).min(app.pipeline_runs.len() - 1);
+                                        app.selected_pipeline_run_idx =
+                                            (app.selected_pipeline_run_idx + 10)
+                                                .min(app.pipeline_runs.len() - 1);
                                     }
-                                } else if app.release_drill_down == crate::app::ReleaseDrillDown::Tasks {
+                                } else if app.release_drill_down
+                                    == crate::app::ReleaseDrillDown::Tasks
+                                {
                                     if !app.release_tasks.is_empty() {
-                                        app.selected_release_task_idx = (app.selected_release_task_idx + 10).min(app.release_tasks.len() - 1);
+                                        app.selected_release_task_idx =
+                                            (app.selected_release_task_idx + 10)
+                                                .min(app.release_tasks.len() - 1);
                                     }
-                                } else if app.release_drill_down == crate::app::ReleaseDrillDown::Stages {
+                                } else if app.release_drill_down
+                                    == crate::app::ReleaseDrillDown::Stages
+                                {
                                     if !app.release_stages.is_empty() {
-                                        app.selected_release_stage_idx = (app.selected_release_stage_idx + 10).min(app.release_stages.len() - 1);
+                                        app.selected_release_stage_idx =
+                                            (app.selected_release_stage_idx + 10)
+                                                .min(app.release_stages.len() - 1);
                                     }
-                                } else if app.release_drill_down == crate::app::ReleaseDrillDown::Items
-                                    && !app.release_list.is_empty() {
-                                        app.selected_release_item_idx = (app.selected_release_item_idx + 10).min(app.release_list.len() - 1);
-                                    }
+                                } else if app.release_drill_down
+                                    == crate::app::ReleaseDrillDown::Items
+                                    && !app.release_list.is_empty()
+                                {
+                                    app.selected_release_item_idx = (app.selected_release_item_idx
+                                        + 10)
+                                        .min(app.release_list.len() - 1);
+                                }
                             }
                         }
                     }
                     KeyCode::Char('u') => {
                         match app.current_view {
-                            View::Tasks => {
-                                match app.focus {
-                                    Focus::WorkItems => app.list_jump_up(),
-                                    Focus::Preview => {
-                                        if app.preview_tab == crate::app::PreviewTab::References {
-                                            app.relations_page_up();
-                                        } else {
-                                            app.preview_scroll = app.preview_scroll.saturating_sub(20);
-                                        }
+                            View::Tasks => match app.focus {
+                                Focus::WorkItems => app.list_jump_up(),
+                                Focus::Preview => {
+                                    if app.preview_tab == crate::app::PreviewTab::References {
+                                        app.relations_page_up();
+                                    } else {
+                                        app.preview_scroll = app.preview_scroll.saturating_sub(20);
                                     }
                                 }
-                            }
+                            },
+                            View::PRs => match app.pr_focus {
+                                crate::app::PRFocus::Active
+                                | crate::app::PRFocus::Mine
+                                | crate::app::PRFocus::Completed
+                                | crate::app::PRFocus::Abandoned => match app.pr_drill_down {
+                                    crate::app::PRDrillDown::Repos => {
+                                        app.selected_repo_idx =
+                                            app.selected_repo_idx.saturating_sub(10);
+                                    }
+                                    crate::app::PRDrillDown::PRs => {
+                                        app.selected_pr_idx =
+                                            app.selected_pr_idx.saturating_sub(10);
+                                    }
+                                },
+                                crate::app::PRFocus::Preview => {
+                                    app.pr_preview_scroll =
+                                        app.pr_preview_scroll.saturating_sub(10);
+                                }
+                            },
                             View::CICD => {
                                 // Page up based on focus
                                 if app.cicd_focus == crate::app::CICDFocus::Preview {
                                     // Scroll preview pane or logs
-                                    if app.release_drill_down == crate::app::ReleaseDrillDown::Tasks && !app.release_task_logs.is_empty() {
+                                    if app.release_drill_down == crate::app::ReleaseDrillDown::Tasks
+                                        && !app.release_task_logs.is_empty()
+                                    {
                                         app.log_scroll = app.log_scroll.saturating_sub(20);
                                     } else {
-                                        app.cicd_preview_scroll = app.cicd_preview_scroll.saturating_sub(10);
+                                        app.cicd_preview_scroll =
+                                            app.cicd_preview_scroll.saturating_sub(10);
                                     }
-                                } else if app.pipeline_drill_down == crate::app::PipelineDrillDown::Tasks {
+                                } else if app.pipeline_drill_down
+                                    == crate::app::PipelineDrillDown::Tasks
+                                {
                                     if !app.build_log_lines.is_empty() {
                                         app.log_scroll = app.log_scroll.saturating_sub(20);
                                     } else {
-                                        app.selected_task_idx = app.selected_task_idx.saturating_sub(10);
+                                        app.selected_task_idx =
+                                            app.selected_task_idx.saturating_sub(10);
                                     }
-                                } else if app.pipeline_drill_down == crate::app::PipelineDrillDown::Runs {
-                                    app.selected_pipeline_run_idx = app.selected_pipeline_run_idx.saturating_sub(10);
-                                } else if app.release_drill_down == crate::app::ReleaseDrillDown::Tasks {
-                                    app.selected_release_task_idx = app.selected_release_task_idx.saturating_sub(10);
-                                } else if app.release_drill_down == crate::app::ReleaseDrillDown::Stages {
-                                    app.selected_release_stage_idx = app.selected_release_stage_idx.saturating_sub(10);
-                                } else if app.release_drill_down == crate::app::ReleaseDrillDown::Items {
-                                    app.selected_release_item_idx = app.selected_release_item_idx.saturating_sub(10);
+                                } else if app.pipeline_drill_down
+                                    == crate::app::PipelineDrillDown::Runs
+                                {
+                                    app.selected_pipeline_run_idx =
+                                        app.selected_pipeline_run_idx.saturating_sub(10);
+                                } else if app.release_drill_down
+                                    == crate::app::ReleaseDrillDown::Tasks
+                                {
+                                    app.selected_release_task_idx =
+                                        app.selected_release_task_idx.saturating_sub(10);
+                                } else if app.release_drill_down
+                                    == crate::app::ReleaseDrillDown::Stages
+                                {
+                                    app.selected_release_stage_idx =
+                                        app.selected_release_stage_idx.saturating_sub(10);
+                                } else if app.release_drill_down
+                                    == crate::app::ReleaseDrillDown::Items
+                                {
+                                    app.selected_release_item_idx =
+                                        app.selected_release_item_idx.saturating_sub(10);
                                 }
                             }
                         }
@@ -666,6 +807,14 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                     app.set_status("Tasks view");
                 }
                 KeyCode::Char('2') => {
+                    app.current_view = crate::app::View::PRs;
+                    // Start background PR loader if not already loaded
+                    if app.repositories.is_empty() && !app.pr_loading {
+                        app.start_pr_loader();
+                    }
+                    app.set_status("PRs view");
+                }
+                KeyCode::Char('3') => {
                     app.current_view = crate::app::View::CICD;
                     // Start background CI/CD loader if not already loaded
                     if app.pipelines.is_empty() && !app.cicd_loading {
@@ -680,18 +829,38 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 // Navigation
                 KeyCode::Char('j') | KeyCode::Down => {
                     match app.current_view {
-                        View::Tasks => {
-                            match app.focus {
-                                Focus::WorkItems => app.list_next(),
-                                Focus::Preview => {
-                                    if app.preview_tab == crate::app::PreviewTab::References {
-                                        app.relations_next();
-                                    } else {
-                                        app.scroll_preview_down();
-                                    }
+                        View::Tasks => match app.focus {
+                            Focus::WorkItems => app.list_next(),
+                            Focus::Preview => {
+                                if app.preview_tab == crate::app::PreviewTab::References {
+                                    app.relations_next();
+                                } else {
+                                    app.scroll_preview_down();
                                 }
                             }
-                        }
+                        },
+                        View::PRs => match app.pr_focus {
+                            crate::app::PRFocus::Active
+                            | crate::app::PRFocus::Mine
+                            | crate::app::PRFocus::Completed
+                            | crate::app::PRFocus::Abandoned => match app.pr_drill_down {
+                                crate::app::PRDrillDown::Repos => {
+                                    if !app.repositories.is_empty() {
+                                        app.selected_repo_idx = (app.selected_repo_idx + 1)
+                                            .min(app.repositories.len() - 1);
+                                    }
+                                }
+                                crate::app::PRDrillDown::PRs => {
+                                    if !app.pull_requests().is_empty() {
+                                        app.selected_pr_idx = (app.selected_pr_idx + 1)
+                                            .min(app.pull_requests().len() - 1);
+                                    }
+                                }
+                            },
+                            crate::app::PRFocus::Preview => {
+                                app.pr_preview_scroll = app.pr_preview_scroll.saturating_add(1);
+                            }
+                        },
                         View::CICD => {
                             match app.cicd_focus {
                                 crate::app::CICDFocus::Pipelines => {
@@ -700,13 +869,16 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                             // Navigate tasks
                                             let task_count = app.get_timeline_tasks().len();
                                             if task_count > 0 {
-                                                app.selected_task_idx = (app.selected_task_idx + 1).min(task_count - 1);
+                                                app.selected_task_idx =
+                                                    (app.selected_task_idx + 1).min(task_count - 1);
                                             }
                                         }
                                         crate::app::PipelineDrillDown::Runs => {
                                             // Navigate runs
                                             if !app.pipeline_runs.is_empty() {
-                                                app.selected_pipeline_run_idx = (app.selected_pipeline_run_idx + 1).min(app.pipeline_runs.len() - 1);
+                                                app.selected_pipeline_run_idx =
+                                                    (app.selected_pipeline_run_idx + 1)
+                                                        .min(app.pipeline_runs.len() - 1);
                                             }
                                         }
                                         crate::app::PipelineDrillDown::None => {
@@ -719,19 +891,25 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         crate::app::ReleaseDrillDown::Tasks => {
                                             // Navigate tasks
                                             if !app.release_tasks.is_empty() {
-                                                app.selected_release_task_idx = (app.selected_release_task_idx + 1).min(app.release_tasks.len() - 1);
+                                                app.selected_release_task_idx =
+                                                    (app.selected_release_task_idx + 1)
+                                                        .min(app.release_tasks.len() - 1);
                                             }
                                         }
                                         crate::app::ReleaseDrillDown::Stages => {
                                             // Navigate stages
                                             if !app.release_stages.is_empty() {
-                                                app.selected_release_stage_idx = (app.selected_release_stage_idx + 1).min(app.release_stages.len() - 1);
+                                                app.selected_release_stage_idx =
+                                                    (app.selected_release_stage_idx + 1)
+                                                        .min(app.release_stages.len() - 1);
                                             }
                                         }
                                         crate::app::ReleaseDrillDown::Items => {
                                             // Navigate release items
                                             if !app.release_list.is_empty() {
-                                                app.selected_release_item_idx = (app.selected_release_item_idx + 1).min(app.release_list.len() - 1);
+                                                app.selected_release_item_idx =
+                                                    (app.selected_release_item_idx + 1)
+                                                        .min(app.release_list.len() - 1);
                                             }
                                         }
                                         crate::app::ReleaseDrillDown::None => {
@@ -741,11 +919,17 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                 }
                                 crate::app::CICDFocus::Preview => {
                                     // Scroll logs or preview
-                                    if (app.pipeline_drill_down == crate::app::PipelineDrillDown::Tasks && !app.build_log_lines.is_empty())
-                                        || (app.release_drill_down == crate::app::ReleaseDrillDown::Tasks && !app.release_task_logs.is_empty()) {
+                                    if (app.pipeline_drill_down
+                                        == crate::app::PipelineDrillDown::Tasks
+                                        && !app.build_log_lines.is_empty())
+                                        || (app.release_drill_down
+                                            == crate::app::ReleaseDrillDown::Tasks
+                                            && !app.release_task_logs.is_empty())
+                                    {
                                         app.log_scroll = app.log_scroll.saturating_add(1);
                                     } else {
-                                        app.cicd_preview_scroll = app.cicd_preview_scroll.saturating_add(1);
+                                        app.cicd_preview_scroll =
+                                            app.cicd_preview_scroll.saturating_add(1);
                                     }
                                 }
                             }
@@ -754,18 +938,32 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
                     match app.current_view {
-                        View::Tasks => {
-                            match app.focus {
-                                Focus::WorkItems => app.list_prev(),
-                                Focus::Preview => {
-                                    if app.preview_tab == crate::app::PreviewTab::References {
-                                        app.relations_prev();
-                                    } else {
-                                        app.scroll_preview_up();
-                                    }
+                        View::Tasks => match app.focus {
+                            Focus::WorkItems => app.list_prev(),
+                            Focus::Preview => {
+                                if app.preview_tab == crate::app::PreviewTab::References {
+                                    app.relations_prev();
+                                } else {
+                                    app.scroll_preview_up();
                                 }
                             }
-                        }
+                        },
+                        View::PRs => match app.pr_focus {
+                            crate::app::PRFocus::Active
+                            | crate::app::PRFocus::Mine
+                            | crate::app::PRFocus::Completed
+                            | crate::app::PRFocus::Abandoned => match app.pr_drill_down {
+                                crate::app::PRDrillDown::Repos => {
+                                    app.selected_repo_idx = app.selected_repo_idx.saturating_sub(1);
+                                }
+                                crate::app::PRDrillDown::PRs => {
+                                    app.selected_pr_idx = app.selected_pr_idx.saturating_sub(1);
+                                }
+                            },
+                            crate::app::PRFocus::Preview => {
+                                app.pr_preview_scroll = app.pr_preview_scroll.saturating_sub(1);
+                            }
+                        },
                         View::CICD => {
                             match app.cicd_focus {
                                 crate::app::CICDFocus::Pipelines => {
@@ -773,13 +971,15 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         crate::app::PipelineDrillDown::Tasks => {
                                             // Navigate tasks
                                             if app.selected_task_idx > 0 {
-                                                app.selected_task_idx = app.selected_task_idx.saturating_sub(1);
+                                                app.selected_task_idx =
+                                                    app.selected_task_idx.saturating_sub(1);
                                             }
                                         }
                                         crate::app::PipelineDrillDown::Runs => {
                                             // Navigate runs
                                             if !app.pipeline_runs.is_empty() {
-                                                app.selected_pipeline_run_idx = app.selected_pipeline_run_idx.saturating_sub(1);
+                                                app.selected_pipeline_run_idx =
+                                                    app.selected_pipeline_run_idx.saturating_sub(1);
                                             }
                                         }
                                         crate::app::PipelineDrillDown::None => {
@@ -791,15 +991,18 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                     match app.release_drill_down {
                                         crate::app::ReleaseDrillDown::Tasks => {
                                             // Navigate tasks
-                                            app.selected_release_task_idx = app.selected_release_task_idx.saturating_sub(1);
+                                            app.selected_release_task_idx =
+                                                app.selected_release_task_idx.saturating_sub(1);
                                         }
                                         crate::app::ReleaseDrillDown::Stages => {
                                             // Navigate stages
-                                            app.selected_release_stage_idx = app.selected_release_stage_idx.saturating_sub(1);
+                                            app.selected_release_stage_idx =
+                                                app.selected_release_stage_idx.saturating_sub(1);
                                         }
                                         crate::app::ReleaseDrillDown::Items => {
                                             // Navigate release items
-                                            app.selected_release_item_idx = app.selected_release_item_idx.saturating_sub(1);
+                                            app.selected_release_item_idx =
+                                                app.selected_release_item_idx.saturating_sub(1);
                                         }
                                         crate::app::ReleaseDrillDown::None => {
                                             app.release_prev();
@@ -808,11 +1011,17 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                 }
                                 crate::app::CICDFocus::Preview => {
                                     // Scroll logs or preview
-                                    if (app.pipeline_drill_down == crate::app::PipelineDrillDown::Tasks && !app.build_log_lines.is_empty())
-                                        || (app.release_drill_down == crate::app::ReleaseDrillDown::Tasks && !app.release_task_logs.is_empty()) {
+                                    if (app.pipeline_drill_down
+                                        == crate::app::PipelineDrillDown::Tasks
+                                        && !app.build_log_lines.is_empty())
+                                        || (app.release_drill_down
+                                            == crate::app::ReleaseDrillDown::Tasks
+                                            && !app.release_task_logs.is_empty())
+                                    {
                                         app.log_scroll = app.log_scroll.saturating_sub(1);
                                     } else {
-                                        app.cicd_preview_scroll = app.cicd_preview_scroll.saturating_sub(1);
+                                        app.cicd_preview_scroll =
+                                            app.cicd_preview_scroll.saturating_sub(1);
                                     }
                                 }
                             }
@@ -826,23 +1035,55 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 KeyCode::Char('h') => {
                     match app.current_view {
                         View::Tasks => app.focus = Focus::WorkItems,
+                        View::PRs => {
+                            if app.pr_focus == crate::app::PRFocus::Preview {
+                                app.pr_focus = app.pr_last_list_focus;
+                            } else if app.pr_drill_down == crate::app::PRDrillDown::PRs {
+                                // Cycle to previous pane (instant, no reload)
+                                app.save_pr_idx();
+                                let prev = app.pr_focus.prev_pane();
+                                app.pr_focus = prev;
+                                app.pr_last_list_focus = prev;
+                                app.restore_pr_idx();
+                            }
+                        }
                         View::CICD => app.cicd_focus = crate::app::CICDFocus::Pipelines,
                     }
                 }
                 KeyCode::Char('l') => {
                     match app.current_view {
                         View::Tasks => app.focus = Focus::Preview,
+                        View::PRs => {
+                            if app.pr_drill_down == crate::app::PRDrillDown::PRs
+                                && app.pr_focus.is_list()
+                            {
+                                // Cycle to next pane (instant, no reload)
+                                app.save_pr_idx();
+                                let next = app.pr_focus.next_pane();
+                                app.pr_focus = next;
+                                app.pr_last_list_focus = next;
+                                app.restore_pr_idx();
+                            }
+                        }
                         View::CICD => app.cicd_focus = crate::app::CICDFocus::Releases,
                     }
                 }
                 KeyCode::Tab => {
-                    app.next_tab();
-                    // Reset relations selection when switching tabs
-                    app.relations_list_state.select(None);
+                    if app.current_view == View::PRs {
+                        app.pr_preview_tab = app.pr_preview_tab.next();
+                    } else {
+                        app.next_tab();
+                        // Reset relations selection when switching tabs
+                        app.relations_list_state.select(None);
+                    }
                 }
                 KeyCode::BackTab => {
-                    app.prev_tab();
-                    app.relations_list_state.select(None);
+                    if app.current_view == View::PRs {
+                        app.pr_preview_tab = app.pr_preview_tab.prev();
+                    } else {
+                        app.prev_tab();
+                        app.relations_list_state.select(None);
+                    }
                 }
 
                 // Actions
@@ -856,15 +1097,45 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                 }
                             }
                         }
+                        View::PRs => {
+                            match app.pr_focus {
+                                crate::app::PRFocus::Active
+                                | crate::app::PRFocus::Mine
+                                | crate::app::PRFocus::Completed
+                                | crate::app::PRFocus::Abandoned => {
+                                    match app.pr_drill_down {
+                                        crate::app::PRDrillDown::Repos => {
+                                            // Drill into selected repo to see PRs
+                                            if !app.repositories.is_empty() {
+                                                app.pr_drill_down = crate::app::PRDrillDown::PRs;
+                                                app.load_prs_for_repo();
+                                            }
+                                        }
+                                        crate::app::PRDrillDown::PRs => {
+                                            // Load PR detail (threads, policies)
+                                            if !app.pull_requests().is_empty() {
+                                                app.load_pr_detail();
+                                                app.pr_last_list_focus = app.pr_focus;
+                                                app.pr_focus = crate::app::PRFocus::Preview;
+                                            }
+                                        }
+                                    }
+                                }
+                                crate::app::PRFocus::Preview => {}
+                            }
+                        }
                         View::CICD => {
                             match app.cicd_focus {
                                 crate::app::CICDFocus::Pipelines => {
                                     match app.pipeline_drill_down {
                                         crate::app::PipelineDrillDown::None => {
                                             // Drill into pipeline runs
-                                            if let Some(pipeline) = app.pipelines.get(app.selected_pipeline_idx) {
+                                            if let Some(pipeline) =
+                                                app.pipelines.get(app.selected_pipeline_idx)
+                                            {
                                                 let pipeline_id = pipeline.id;
-                                                app.pipeline_drill_down = crate::app::PipelineDrillDown::Runs;
+                                                app.pipeline_drill_down =
+                                                    crate::app::PipelineDrillDown::Runs;
                                                 app.pipeline_runs.clear();
                                                 app.selected_pipeline_run_idx = 0;
                                                 // Load runs in background
@@ -873,11 +1144,15 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         }
                                         crate::app::PipelineDrillDown::Runs => {
                                             // Drill into run timeline (stages/jobs/tasks)
-                                            if let Some(run) = app.pipeline_runs.get(app.selected_pipeline_run_idx) {
+                                            if let Some(run) =
+                                                app.pipeline_runs.get(app.selected_pipeline_run_idx)
+                                            {
                                                 let build_id = run.id;
-                                                let is_running = run.status.as_deref() == Some("inProgress");
-                                                app.selected_run_id = Some(build_id);  // Store for log loading
-                                                app.pipeline_drill_down = crate::app::PipelineDrillDown::Tasks;
+                                                let is_running =
+                                                    run.status.as_deref() == Some("inProgress");
+                                                app.selected_run_id = Some(build_id); // Store for log loading
+                                                app.pipeline_drill_down =
+                                                    crate::app::PipelineDrillDown::Tasks;
                                                 app.timeline_records.clear();
                                                 app.selected_task_idx = 0;
                                                 app.build_log_lines.clear();
@@ -895,11 +1170,14 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                             // Extract log_id first to avoid borrow issues
                                             let log_info = {
                                                 let tasks = app.get_timeline_tasks();
-                                                tasks.get(app.selected_task_idx)
+                                                tasks
+                                                    .get(app.selected_task_idx)
                                                     .and_then(|task| task.log.as_ref())
                                                     .map(|log| log.id)
                                             };
-                                            if let (Some(log_id), Some(build_id)) = (log_info, app.selected_run_id) {
+                                            if let (Some(log_id), Some(build_id)) =
+                                                (log_info, app.selected_run_id)
+                                            {
                                                 app.build_log_lines.clear();
                                                 app.log_scroll = 0;
                                                 app.start_log_loader(build_id, log_id);
@@ -911,9 +1189,12 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                     match app.release_drill_down {
                                         crate::app::ReleaseDrillDown::None => {
                                             // Drill into releases for this definition
-                                            if let Some(release_def) = app.releases.get(app.selected_release_idx) {
+                                            if let Some(release_def) =
+                                                app.releases.get(app.selected_release_idx)
+                                            {
                                                 let def_id = release_def.id;
-                                                app.release_drill_down = crate::app::ReleaseDrillDown::Items;
+                                                app.release_drill_down =
+                                                    crate::app::ReleaseDrillDown::Items;
                                                 app.release_list.clear();
                                                 app.selected_release_item_idx = 0;
                                                 app.start_releases_loader(def_id);
@@ -921,9 +1202,12 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         }
                                         crate::app::ReleaseDrillDown::Items => {
                                             // Drill into stages for selected release
-                                            if let Some(release) = app.release_list.get(app.selected_release_item_idx) {
+                                            if let Some(release) =
+                                                app.release_list.get(app.selected_release_item_idx)
+                                            {
                                                 let release_id = release.id;
-                                                app.release_drill_down = crate::app::ReleaseDrillDown::Stages;
+                                                app.release_drill_down =
+                                                    crate::app::ReleaseDrillDown::Stages;
                                                 app.start_release_stages_loader(release_id);
                                                 // Start auto-refresh for this release
                                                 app.start_release_auto_refresh(release_id);
@@ -932,9 +1216,12 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         crate::app::ReleaseDrillDown::Stages => {
                                             // Drill into tasks for selected stage
                                             if !app.release_stages.is_empty() {
-                                                app.load_release_tasks_from_stage(app.selected_release_stage_idx);
+                                                app.load_release_tasks_from_stage(
+                                                    app.selected_release_stage_idx,
+                                                );
                                                 if !app.release_tasks.is_empty() {
-                                                    app.release_drill_down = crate::app::ReleaseDrillDown::Tasks;
+                                                    app.release_drill_down =
+                                                        crate::app::ReleaseDrillDown::Tasks;
                                                 } else {
                                                     app.set_status("No tasks in this stage");
                                                 }
@@ -942,7 +1229,9 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         }
                                         crate::app::ReleaseDrillDown::Tasks => {
                                             // Load logs for selected task
-                                            let log_url = app.release_tasks.get(app.selected_release_task_idx)
+                                            let log_url = app
+                                                .release_tasks
+                                                .get(app.selected_release_task_idx)
                                                 .and_then(|task| task.log_url.clone());
                                             if let Some(url) = log_url {
                                                 app.start_release_task_log_loader(&url);
@@ -963,13 +1252,37 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 KeyCode::Esc => {
                     match app.current_view {
                         View::Tasks => {} // No action in Tasks view
+                        View::PRs => {
+                            if app.pr_focus == crate::app::PRFocus::Preview {
+                                app.pr_focus = app.pr_last_list_focus;
+                            } else {
+                                match app.pr_drill_down {
+                                    crate::app::PRDrillDown::PRs => {
+                                        app.pr_drill_down = crate::app::PRDrillDown::Repos;
+                                        app.pr_active.clear();
+                                        app.pr_mine.clear();
+                                        app.pr_completed.clear();
+                                        app.pr_threads.clear();
+                                        app.pr_policies.clear();
+                                        app.selected_pr_idx = 0;
+                                        app.selected_pr_detail = None;
+                                        app.pr_search_query.clear();
+                                    }
+                                    crate::app::PRDrillDown::Repos => {
+                                        app.pr_search_query.clear();
+                                    }
+                                }
+                            }
+                        }
                         View::CICD => {
                             if app.cicd_focus == crate::app::CICDFocus::Preview {
                                 // Return from preview to correct pane based on drill-down state
                                 if app.release_drill_down == crate::app::ReleaseDrillDown::Tasks {
                                     app.cicd_focus = crate::app::CICDFocus::Releases;
                                     app.release_task_logs.clear();
-                                } else if app.pipeline_drill_down != crate::app::PipelineDrillDown::None {
+                                } else if app.pipeline_drill_down
+                                    != crate::app::PipelineDrillDown::None
+                                {
                                     app.cicd_focus = crate::app::CICDFocus::Pipelines;
                                 } else {
                                     app.cicd_focus = crate::app::CICDFocus::Releases;
@@ -981,13 +1294,15 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         match app.pipeline_drill_down {
                                             crate::app::PipelineDrillDown::Tasks => {
                                                 // Go back to runs list
-                                                app.pipeline_drill_down = crate::app::PipelineDrillDown::Runs;
+                                                app.pipeline_drill_down =
+                                                    crate::app::PipelineDrillDown::Runs;
                                                 app.timeline_records.clear();
                                                 app.build_log_lines.clear();
                                             }
                                             crate::app::PipelineDrillDown::Runs => {
                                                 // Go back to pipelines list
-                                                app.pipeline_drill_down = crate::app::PipelineDrillDown::None;
+                                                app.pipeline_drill_down =
+                                                    crate::app::PipelineDrillDown::None;
                                                 app.pipeline_runs.clear();
                                             }
                                             crate::app::PipelineDrillDown::None => {}
@@ -997,19 +1312,22 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         match app.release_drill_down {
                                             crate::app::ReleaseDrillDown::Tasks => {
                                                 // Go back to stages list
-                                                app.release_drill_down = crate::app::ReleaseDrillDown::Stages;
+                                                app.release_drill_down =
+                                                    crate::app::ReleaseDrillDown::Stages;
                                                 app.release_tasks.clear();
                                                 app.release_task_logs.clear();
                                             }
                                             crate::app::ReleaseDrillDown::Stages => {
                                                 // Go back to releases list
-                                                app.release_drill_down = crate::app::ReleaseDrillDown::Items;
+                                                app.release_drill_down =
+                                                    crate::app::ReleaseDrillDown::Items;
                                                 app.release_stages.clear();
                                                 app.stop_release_auto_refresh();
                                             }
                                             crate::app::ReleaseDrillDown::Items => {
                                                 // Go back to release definitions list
-                                                app.release_drill_down = crate::app::ReleaseDrillDown::None;
+                                                app.release_drill_down =
+                                                    crate::app::ReleaseDrillDown::None;
                                                 app.release_list.clear();
                                             }
                                             crate::app::ReleaseDrillDown::None => {}
@@ -1032,13 +1350,20 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 KeyCode::Char('p') => {
                     match app.current_view {
                         View::Tasks => app.toggle_pin(),
+                        View::PRs => {} // No pinning for PRs yet
                         View::CICD => {
                             // Only allow pinning at parent level (not in drill-down)
                             match app.cicd_focus {
-                                crate::app::CICDFocus::Pipelines if app.pipeline_drill_down == crate::app::PipelineDrillDown::None => {
+                                crate::app::CICDFocus::Pipelines
+                                    if app.pipeline_drill_down
+                                        == crate::app::PipelineDrillDown::None =>
+                                {
                                     app.toggle_pin_pipeline();
                                 }
-                                crate::app::CICDFocus::Releases if app.release_drill_down == crate::app::ReleaseDrillDown::None => {
+                                crate::app::CICDFocus::Releases
+                                    if app.release_drill_down
+                                        == crate::app::ReleaseDrillDown::None =>
+                                {
                                     app.toggle_pin_release();
                                 }
                                 _ => {}
@@ -1051,12 +1376,14 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                 KeyCode::Char('I') => {
                     if app.current_view == View::Tasks {
                         app.input_mode = InputMode::SprintSelect;
-                        app.dropdown_list_state.select(Some(app.selected_sprint_idx));
+                        app.dropdown_list_state
+                            .select(Some(app.selected_sprint_idx));
                     }
                 }
                 KeyCode::Char('P') => {
                     app.input_mode = InputMode::ProjectSelect;
-                    app.dropdown_list_state.select(Some(app.current_project_idx));
+                    app.dropdown_list_state
+                        .select(Some(app.current_project_idx));
                 }
                 KeyCode::Char('S') => {
                     if app.current_view == View::Tasks && app.selected_work_item().is_some() {
@@ -1070,14 +1397,41 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                             app.search_query.clear();
                             app.input_mode = InputMode::Search;
                         }
+                        View::PRs => {
+                            app.pr_search_query.clear();
+                            app.input_mode = InputMode::CICDSearch; // Reuse CICDSearch mode for inline search
+                        }
                         View::CICD => {
                             app.cicd_search_query.clear();
                             app.input_mode = InputMode::CICDSearch;
                         }
                     }
                 }
+                KeyCode::Char('R') => {
+                    if app.current_view == View::PRs
+                        && app.pr_drill_down == crate::app::PRDrillDown::PRs
+                    {
+                        // Go back to repo selection
+                        app.pr_drill_down = crate::app::PRDrillDown::Repos;
+                        app.pr_active.clear();
+                        app.pr_mine.clear();
+                        app.pr_completed.clear();
+                        app.pr_abandoned.clear();
+                        app.pr_threads.clear();
+                        app.pr_policies.clear();
+                        app.selected_pr_idx = 0;
+                        app.selected_pr_detail = None;
+                        app.current_repo_name = None;
+                        app.current_repo_id = None;
+                        app.pr_search_query.clear();
+                        app.pr_focus = crate::app::PRFocus::Active;
+                    }
+                }
                 KeyCode::Char('A') => {
-                    if app.current_view == View::Tasks && app.selected_work_item().is_some() && !app.users.is_empty() {
+                    if app.current_view == View::Tasks
+                        && app.selected_work_item().is_some()
+                        && !app.users.is_empty()
+                    {
                         app.input_mode = InputMode::EditAssignee;
                         app.dropdown_list_state.select(Some(0));
                     } else if app.current_view == View::CICD
@@ -1110,9 +1464,14 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                             crate::app::CICDFocus::Pipelines => {
                                 if app.pipeline_drill_down == crate::app::PipelineDrillDown::Runs {
                                     // Cancel pipeline run - only if in progress
-                                    if let Some(run) = app.pipeline_runs.get(app.selected_pipeline_run_idx) {
+                                    if let Some(run) =
+                                        app.pipeline_runs.get(app.selected_pipeline_run_idx)
+                                    {
                                         if run.status.as_deref() == Some("inProgress") {
-                                            let build_number = run.build_number.clone().unwrap_or_else(|| "?".to_string());
+                                            let build_number = run
+                                                .build_number
+                                                .clone()
+                                                .unwrap_or_else(|| "?".to_string());
                                             app.confirm_action_dialog = Some(crate::app::ConfirmActionDialog::new(
                                                 crate::app::ConfirmActionType::CancelPipelineRun {
                                                     run_id: run.id,
@@ -1130,12 +1489,22 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                 match app.release_drill_down {
                                     crate::app::ReleaseDrillDown::Items => {
                                         // Cancel/abandon entire release
-                                        if let Some(release) = app.release_list.get(app.selected_release_item_idx) {
+                                        if let Some(release) =
+                                            app.release_list.get(app.selected_release_item_idx)
+                                        {
                                             // Check if release has any in-progress environments
-                                            let has_active = release.environments.as_ref()
-                                                .map(|envs| envs.iter().any(|e| e.status.as_deref() == Some("inProgress")))
+                                            let has_active = release
+                                                .environments
+                                                .as_ref()
+                                                .map(|envs| {
+                                                    envs.iter().any(|e| {
+                                                        e.status.as_deref() == Some("inProgress")
+                                                    })
+                                                })
                                                 .unwrap_or(false);
-                                            if has_active || release.status.as_deref() == Some("active") {
+                                            if has_active
+                                                || release.status.as_deref() == Some("active")
+                                            {
                                                 app.confirm_action_dialog = Some(crate::app::ConfirmActionDialog::new(
                                                     crate::app::ConfirmActionType::CancelRelease {
                                                         release_id: release.id,
@@ -1150,13 +1519,19 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                     }
                                     crate::app::ReleaseDrillDown::Stages => {
                                         // Cancel specific stage or reject pending approval
-                                        if let Some(stage) = app.release_stages.get(app.selected_release_stage_idx) {
-                                            let release = app.release_list.get(app.selected_release_item_idx);
-                                            let release_name = release.map(|r| r.name.clone()).unwrap_or_default();
+                                        if let Some(stage) =
+                                            app.release_stages.get(app.selected_release_stage_idx)
+                                        {
+                                            let release =
+                                                app.release_list.get(app.selected_release_item_idx);
+                                            let release_name =
+                                                release.map(|r| r.name.clone()).unwrap_or_default();
                                             let release_id = release.map(|r| r.id).unwrap_or(0);
 
                                             // Check for pending approval first
-                                            let pending_approval = stage.pre_deploy_approvals.iter()
+                                            let pending_approval = stage
+                                                .pre_deploy_approvals
+                                                .iter()
                                                 .find(|a| a.status.as_deref() == Some("pending"));
 
                                             if let Some(approval) = pending_approval {
@@ -1169,7 +1544,8 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                                     }
                                                 ));
                                                 app.input_mode = InputMode::ConfirmAction;
-                                            } else if stage.status.as_deref() == Some("inProgress") {
+                                            } else if stage.status.as_deref() == Some("inProgress")
+                                            {
                                                 // Cancel in-progress stage
                                                 app.confirm_action_dialog = Some(crate::app::ConfirmActionDialog::new(
                                                     crate::app::ConfirmActionType::CancelReleaseEnvironment {
@@ -1200,13 +1576,23 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                             crate::app::CICDFocus::Pipelines => {
                                 if app.pipeline_drill_down == crate::app::PipelineDrillDown::Runs {
                                     // Retrigger pipeline run
-                                    if let Some(run) = app.pipeline_runs.get(app.selected_pipeline_run_idx) {
+                                    if let Some(run) =
+                                        app.pipeline_runs.get(app.selected_pipeline_run_idx)
+                                    {
                                         // Can retrigger completed, failed, or canceled runs
                                         if run.status.as_deref() == Some("completed") {
-                                            let branch = run.source_branch.clone()
+                                            let branch = run
+                                                .source_branch
+                                                .clone()
                                                 .unwrap_or_else(|| "refs/heads/main".to_string());
-                                            let build_number = run.build_number.clone().unwrap_or_else(|| "?".to_string());
-                                            let pipeline_id = run.definition.as_ref().map(|d| d.id)
+                                            let build_number = run
+                                                .build_number
+                                                .clone()
+                                                .unwrap_or_else(|| "?".to_string());
+                                            let pipeline_id = run
+                                                .definition
+                                                .as_ref()
+                                                .map(|d| d.id)
                                                 .or(app.current_pipeline_id)
                                                 .unwrap_or(0);
 
@@ -1228,7 +1614,9 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                 match app.release_drill_down {
                                     crate::app::ReleaseDrillDown::None => {
                                         // Original behavior: open release trigger dialog for new release
-                                        if let Some(release_def) = app.releases.get(app.selected_release_idx) {
+                                        if let Some(release_def) =
+                                            app.releases.get(app.selected_release_idx)
+                                        {
                                             let def_id = release_def.id;
                                             let def_name = release_def.name.clone();
                                             app.open_release_trigger_dialog(def_id, def_name);
@@ -1236,11 +1624,17 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                     }
                                     crate::app::ReleaseDrillDown::Stages => {
                                         // Retrigger/redeploy specific stage
-                                        if let Some(stage) = app.release_stages.get(app.selected_release_stage_idx) {
+                                        if let Some(stage) =
+                                            app.release_stages.get(app.selected_release_stage_idx)
+                                        {
                                             // Can redeploy if not currently in progress
                                             if stage.status.as_deref() != Some("inProgress") {
-                                                let release = app.release_list.get(app.selected_release_item_idx);
-                                                let release_name = release.map(|r| r.name.clone()).unwrap_or_default();
+                                                let release = app
+                                                    .release_list
+                                                    .get(app.selected_release_item_idx);
+                                                let release_name = release
+                                                    .map(|r| r.name.clone())
+                                                    .unwrap_or_default();
                                                 let release_id = release.map(|r| r.id).unwrap_or(0);
 
                                                 app.confirm_action_dialog = Some(crate::app::ConfirmActionDialog::new(
@@ -1272,11 +1666,14 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                             app.input_mode = InputMode::FilterAssignee;
                             app.dropdown_list_state.select(Some(0));
                         }
+                        View::PRs => {} // No assignee filter for PRs
                         View::CICD => {
                             if app.cicd_focus == crate::app::CICDFocus::Releases
                                 && app.release_drill_down == crate::app::ReleaseDrillDown::Stages
                             {
-                                if let Some(stage) = app.release_stages.get(app.selected_release_stage_idx) {
+                                if let Some(stage) =
+                                    app.release_stages.get(app.selected_release_stage_idx)
+                                {
                                     let env_id = stage.id;
                                     let stage_name = stage.name.clone();
                                     app.approve_stage(env_id, &stage_name);
@@ -1321,10 +1718,13 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                             // Existing Tasks open logic
                             match app.focus {
                                 Focus::WorkItems => {
-                                    if let (Some(item), Some(project)) = (app.selected_work_item(), app.current_project()) {
+                                    if let (Some(item), Some(project)) =
+                                        (app.selected_work_item(), app.current_project())
+                                    {
                                         let url = format!(
-                                            "{}/_workitems/edit/{}",
+                                            "{}/{}/_workitems/edit/{}",
                                             project.organization.trim_end_matches('/'),
+                                            urlencoding::encode(&project.project),
                                             item.item.id
                                         );
                                         if let Err(e) = open::that(&url) {
@@ -1339,13 +1739,21 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         if let Some(relation) = app.selected_relation() {
                                             if let Some(url) = app.get_relation_url(relation) {
                                                 if let Err(e) = open::that(&url) {
-                                                    app.set_error(format!("Failed to open browser: {e}"));
+                                                    app.set_error(format!(
+                                                        "Failed to open browser: {e}"
+                                                    ));
                                                 } else {
-                                                    let name = relation.attributes.name.as_deref().unwrap_or("link");
+                                                    let name = relation
+                                                        .attributes
+                                                        .name
+                                                        .as_deref()
+                                                        .unwrap_or("link");
                                                     app.set_status(format!("Opened {name}"));
                                                 }
                                             }
-                                        } else if let (Some(item), Some(project)) = (app.selected_work_item(), app.current_project()) {
+                                        } else if let (Some(item), Some(project)) =
+                                            (app.selected_work_item(), app.current_project())
+                                        {
                                             let url = format!(
                                                 "{}/_workitems/edit/{}",
                                                 project.organization.trim_end_matches('/'),
@@ -1353,13 +1761,53 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                             );
                                             let _ = open::that(&url);
                                         }
-                                    } else if let (Some(item), Some(project)) = (app.selected_work_item(), app.current_project()) {
+                                    } else if let (Some(item), Some(project)) =
+                                        (app.selected_work_item(), app.current_project())
+                                    {
                                         let url = format!(
-                                            "{}/_workitems/edit/{}",
+                                            "{}/{}/_workitems/edit/{}",
                                             project.organization.trim_end_matches('/'),
+                                            urlencoding::encode(&project.project),
                                             item.item.id
                                         );
                                         let _ = open::that(&url);
+                                    }
+                                }
+                            }
+                        }
+                        View::PRs => {
+                            if let Some(project) = app.current_project() {
+                                let org = project.organization.trim_end_matches('/');
+                                let proj_encoded = urlencoding::encode(&project.project);
+                                match app.pr_drill_down {
+                                    crate::app::PRDrillDown::Repos => {
+                                        if let Some(repo) =
+                                            app.repositories.get(app.selected_repo_idx)
+                                        {
+                                            let url =
+                                                format!("{org}/{proj_encoded}/_git/{}", repo.name);
+                                            let _ = open::that(&url);
+                                            app.set_status(format!("Opened {}", repo.name));
+                                        }
+                                    }
+                                    crate::app::PRDrillDown::PRs => {
+                                        if let Some(pr) =
+                                            app.pull_requests().get(app.selected_pr_idx)
+                                        {
+                                            if let Some(repo) =
+                                                app.repositories.get(app.selected_repo_idx)
+                                            {
+                                                let url = format!(
+                                                    "{org}/{proj_encoded}/_git/{}/pullrequest/{}",
+                                                    repo.name, pr.pull_request_id
+                                                );
+                                                let _ = open::that(&url);
+                                                app.set_status(format!(
+                                                    "Opened PR #{}",
+                                                    pr.pull_request_id
+                                                ));
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1375,15 +1823,23 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         match app.pipeline_drill_down {
                                             crate::app::PipelineDrillDown::None => {
                                                 // Open pipeline definition
-                                                if let Some(pipeline) = app.pipelines.get(app.selected_pipeline_idx) {
-                                                    format!("{}/{}/_build?definitionId={}", org, proj_encoded, pipeline.id)
+                                                if let Some(pipeline) =
+                                                    app.pipelines.get(app.selected_pipeline_idx)
+                                                {
+                                                    format!(
+                                                        "{}/{}/_build?definitionId={}",
+                                                        org, proj_encoded, pipeline.id
+                                                    )
                                                 } else {
                                                     return Ok(false);
                                                 }
                                             }
                                             crate::app::PipelineDrillDown::Runs => {
                                                 // Open pipeline run results
-                                                if let Some(run) = app.pipeline_runs.get(app.selected_pipeline_run_idx) {
+                                                if let Some(run) = app
+                                                    .pipeline_runs
+                                                    .get(app.selected_pipeline_run_idx)
+                                                {
                                                     format!("{}/{}/_build/results?buildId={}&view=results", org, proj_encoded, run.id)
                                                 } else {
                                                     return Ok(false);
@@ -1391,10 +1847,17 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                             }
                                             crate::app::PipelineDrillDown::Tasks => {
                                                 // Open pipeline run logs with job/task context
-                                                if let Some(run) = app.pipeline_runs.get(app.selected_pipeline_run_idx) {
+                                                if let Some(run) = app
+                                                    .pipeline_runs
+                                                    .get(app.selected_pipeline_run_idx)
+                                                {
                                                     // Get selected task's parent job and task IDs for deep linking
-                                                    if let Some(task) = app.timeline_records.iter()
-                                                        .filter(|r| r.record_type.as_deref() == Some("Task"))
+                                                    if let Some(task) = app
+                                                        .timeline_records
+                                                        .iter()
+                                                        .filter(|r| {
+                                                            r.record_type.as_deref() == Some("Task")
+                                                        })
                                                         .nth(app.selected_task_idx)
                                                     {
                                                         if let Some(parent_id) = &task.parent_id {
@@ -1416,16 +1879,23 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         match app.release_drill_down {
                                             crate::app::ReleaseDrillDown::None => {
                                                 // Open release definition
-                                                if let Some(release_def) = app.releases.get(app.selected_release_idx) {
+                                                if let Some(release_def) =
+                                                    app.releases.get(app.selected_release_idx)
+                                                {
                                                     format!("{}/{}/_release?_a=releases&view=mine&definitionId={}",
                                                         org, proj_encoded, release_def.id)
                                                 } else {
                                                     return Ok(false);
                                                 }
                                             }
-                                            crate::app::ReleaseDrillDown::Items | crate::app::ReleaseDrillDown::Stages | crate::app::ReleaseDrillDown::Tasks => {
+                                            crate::app::ReleaseDrillDown::Items
+                                            | crate::app::ReleaseDrillDown::Stages
+                                            | crate::app::ReleaseDrillDown::Tasks => {
                                                 // Open specific release (same URL for items, stages, and tasks)
-                                                if let Some(release) = app.release_list.get(app.selected_release_item_idx) {
+                                                if let Some(release) = app
+                                                    .release_list
+                                                    .get(app.selected_release_item_idx)
+                                                {
                                                     format!("{}/{}/_releaseProgress?releaseId={}&_a=release-pipeline-progress",
                                                         org, proj_encoded, release.id)
                                                 } else {
@@ -1436,14 +1906,25 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                     }
                                     crate::app::CICDFocus::Preview => {
                                         // From preview, open whatever is being previewed
-                                        if app.pipeline_drill_down == crate::app::PipelineDrillDown::Tasks {
-                                            if let Some(run) = app.pipeline_runs.get(app.selected_pipeline_run_idx) {
-                                                format!("{}/{}/_build/results?buildId={}&view=logs", org, proj_encoded, run.id)
+                                        if app.pipeline_drill_down
+                                            == crate::app::PipelineDrillDown::Tasks
+                                        {
+                                            if let Some(run) =
+                                                app.pipeline_runs.get(app.selected_pipeline_run_idx)
+                                            {
+                                                format!(
+                                                    "{}/{}/_build/results?buildId={}&view=logs",
+                                                    org, proj_encoded, run.id
+                                                )
                                             } else {
                                                 return Ok(false);
                                             }
-                                        } else if app.release_drill_down == crate::app::ReleaseDrillDown::Items {
-                                            if let Some(release) = app.release_list.get(app.selected_release_item_idx) {
+                                        } else if app.release_drill_down
+                                            == crate::app::ReleaseDrillDown::Items
+                                        {
+                                            if let Some(release) =
+                                                app.release_list.get(app.selected_release_item_idx)
+                                            {
                                                 format!("{}/{}/_releaseProgress?releaseId={}&_a=release-pipeline-progress",
                                                     org, proj_encoded, release.id)
                                             } else {
@@ -1464,7 +1945,7 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                     }
                 }
 
-                // Copy to clipboard - Tasks only
+                // Copy to clipboard
                 KeyCode::Char('y') => {
                     if app.current_view == View::Tasks {
                         if let Some(item) = app.selected_work_item() {
@@ -1474,15 +1955,49 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                 app.set_status(format!("Copied #{id} to clipboard"));
                             }
                         }
+                    } else if app.current_view == View::PRs {
+                        if let Some(pr) = app.pull_requests().get(app.selected_pr_idx) {
+                            let id = pr.pull_request_id.to_string();
+                            if let Ok(mut clipboard) = Clipboard::new() {
+                                let _ = clipboard.set_text(&id);
+                                app.set_status(format!("Copied PR #{id} to clipboard"));
+                            }
+                        }
                     }
                 }
                 KeyCode::Char('Y') => {
                     if app.current_view == View::Tasks {
                         if let Some(item) = app.selected_work_item() {
-                            let content = format_ticket_content(&item.item);
-                            if let Ok(mut clipboard) = Clipboard::new() {
-                                let _ = clipboard.set_text(&content);
-                                app.set_status("Copied ticket content to clipboard");
+                            let id = item.item.id;
+                            if let Some(project) = app.current_project() {
+                                let url = format!(
+                                    "{}/{}/_workitems/edit/{}",
+                                    project.organization.trim_end_matches('/'),
+                                    urlencoding::encode(&project.project),
+                                    id
+                                );
+                                if let Ok(mut clipboard) = Clipboard::new() {
+                                    let _ = clipboard.set_text(&url);
+                                    app.set_status(format!("Copied link for #{id}"));
+                                }
+                            }
+                        }
+                    } else if app.current_view == View::PRs {
+                        if let Some(pr) = app.pull_requests().get(app.selected_pr_idx) {
+                            let pr_id = pr.pull_request_id;
+                            if let Some(project) = app.current_project() {
+                                let repo_name = app.current_repo_name.as_deref().unwrap_or("");
+                                let url = format!(
+                                    "{}/{}/_git/{}/pullrequest/{}",
+                                    project.organization.trim_end_matches('/'),
+                                    urlencoding::encode(&project.project),
+                                    repo_name,
+                                    pr_id
+                                );
+                                if let Ok(mut clipboard) = Clipboard::new() {
+                                    let _ = clipboard.set_text(&url);
+                                    app.set_status(format!("Copied link for PR #{pr_id}"));
+                                }
                             }
                         }
                     }
@@ -1527,30 +2042,43 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                             }
                             app.set_loading(false, "");
                         }
+                        View::PRs => {
+                            match app.pr_drill_down {
+                                crate::app::PRDrillDown::Repos => {
+                                    app.repositories.clear(); // Force bypass cache
+                                    app.start_pr_loader_fresh();
+                                    app.set_status("Refreshing repositories...");
+                                }
+                                crate::app::PRDrillDown::PRs => {
+                                    app.load_prs_for_repo(); // Refresh all 3 panes
+                                    app.set_status("Refreshing pull requests...");
+                                }
+                            }
+                        }
                         View::CICD => {
                             // Context-aware refresh based on current focus and drill-down
                             match app.cicd_focus {
-                                crate::app::CICDFocus::Pipelines => {
-                                    match app.pipeline_drill_down {
-                                        crate::app::PipelineDrillDown::None => {
-                                            app.force_refresh_cicd();
-                                            app.set_status("Refreshing pipelines...");
-                                        }
-                                        crate::app::PipelineDrillDown::Runs => {
-                                            if let Some(pipeline_id) = app.current_pipeline_id {
-                                                app.force_refresh_pipeline_runs(pipeline_id);
-                                                app.set_status("Refreshing runs...");
-                                            }
-                                        }
-                                        crate::app::PipelineDrillDown::Tasks => {
-                                            if let Some(run) = app.pipeline_runs.get(app.selected_pipeline_run_idx) {
-                                                let build_id = run.id;
-                                                app.force_refresh_timeline(build_id);
-                                                app.set_status("Refreshing tasks...");
-                                            }
+                                crate::app::CICDFocus::Pipelines => match app.pipeline_drill_down {
+                                    crate::app::PipelineDrillDown::None => {
+                                        app.force_refresh_cicd();
+                                        app.set_status("Refreshing pipelines...");
+                                    }
+                                    crate::app::PipelineDrillDown::Runs => {
+                                        if let Some(pipeline_id) = app.current_pipeline_id {
+                                            app.force_refresh_pipeline_runs(pipeline_id);
+                                            app.set_status("Refreshing runs...");
                                         }
                                     }
-                                }
+                                    crate::app::PipelineDrillDown::Tasks => {
+                                        if let Some(run) =
+                                            app.pipeline_runs.get(app.selected_pipeline_run_idx)
+                                        {
+                                            let build_id = run.id;
+                                            app.force_refresh_timeline(build_id);
+                                            app.set_status("Refreshing tasks...");
+                                        }
+                                    }
+                                },
                                 crate::app::CICDFocus::Releases => {
                                     match app.release_drill_down {
                                         crate::app::ReleaseDrillDown::None => {
@@ -1565,7 +2093,9 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         }
                                         crate::app::ReleaseDrillDown::Stages => {
                                             // Refresh stages by reloading release detail
-                                            if let Some(release) = app.release_list.get(app.selected_release_item_idx) {
+                                            if let Some(release) =
+                                                app.release_list.get(app.selected_release_item_idx)
+                                            {
                                                 app.start_release_stages_loader(release.id);
                                                 app.set_status("Refreshing stages...");
                                             }
@@ -1573,7 +2103,9 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
                                         crate::app::ReleaseDrillDown::Tasks => {
                                             // Refresh tasks from current stage
                                             if !app.release_stages.is_empty() {
-                                                app.load_release_tasks_from_stage(app.selected_release_stage_idx);
+                                                app.load_release_tasks_from_stage(
+                                                    app.selected_release_stage_idx,
+                                                );
                                                 app.set_status("Refreshing tasks...");
                                             }
                                         }
@@ -1593,21 +2125,19 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
             }
         }
 
-        InputMode::ConfirmAction => {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('n') => {
-                    app.confirm_action_dialog = None;
-                    app.input_mode = InputMode::Normal;
-                }
-                KeyCode::Char('y') | KeyCode::Enter => {
-                    if let Some(dialog) = app.confirm_action_dialog.take() {
-                        app.execute_confirmed_action(dialog.action_type);
-                    }
-                    app.input_mode = InputMode::Normal;
-                }
-                _ => {}
+        InputMode::ConfirmAction => match key.code {
+            KeyCode::Esc | KeyCode::Char('n') => {
+                app.confirm_action_dialog = None;
+                app.input_mode = InputMode::Normal;
             }
-        }
+            KeyCode::Char('y') | KeyCode::Enter => {
+                if let Some(dialog) = app.confirm_action_dialog.take() {
+                    app.execute_confirmed_action(dialog.action_type);
+                }
+                app.input_mode = InputMode::Normal;
+            }
+            _ => {}
+        },
     }
 
     Ok(false)
